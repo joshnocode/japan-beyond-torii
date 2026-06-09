@@ -1095,6 +1095,193 @@ h1, h2, h3, h4 {
   border-bottom: none;
 }
 
+/* ─── Assembly Panel ────────────────────────────────────────── */
+.assembly-panel {
+  background: var(--bg-card);
+  border: 1px solid var(--gold-dim);
+  border-radius: var(--radius-lg);
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.assembly-panel-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.assembly-panel-header h3 {
+  font-size: 1.1rem;
+  color: var(--gold);
+}
+
+.assembly-sub {
+  font-size: 0.82rem;
+  color: var(--text-muted);
+  margin-top: 4px;
+}
+
+.assembly-warning {
+  font-size: 0.85rem;
+  color: #e67e22;
+  padding: 10px 14px;
+  background: rgba(230, 126, 34, 0.1);
+  border: 1px solid rgba(230, 126, 34, 0.3);
+  border-radius: var(--radius);
+}
+
+.assembly-progress {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.assembly-stages {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 20px;
+}
+
+.assembly-stage-step {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.78rem;
+  color: var(--text-muted);
+}
+
+.assembly-stage-step.done {
+  color: var(--success);
+}
+
+.assembly-stage-step.active {
+  color: var(--gold);
+  font-weight: 600;
+}
+
+.step-dot {
+  font-size: 0.7rem;
+  width: 14px;
+}
+
+.assembly-active-detail {
+  background: #111;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.assembly-active-label {
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.assembly-active-sub {
+  font-size: 0.82rem;
+  color: var(--text-muted);
+}
+
+.assembly-bar-wrap {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 6px;
+}
+
+.assembly-bar {
+  flex: 1;
+  height: 4px;
+  background: var(--gold);
+  border-radius: 2px;
+  transition: width 0.4s ease;
+  position: relative;
+}
+
+.assembly-bar::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, transparent, rgba(255,255,255,0.3), transparent);
+  animation: shimmer 1.5s infinite;
+}
+
+@keyframes shimmer {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(100%); }
+}
+
+.assembly-pct {
+  font-size: 0.75rem;
+  color: var(--gold);
+  font-weight: 600;
+  width: 34px;
+  flex-shrink: 0;
+}
+
+.assembly-spinner-row {
+  margin-top: 8px;
+}
+
+.assembly-error {
+  flex-shrink: 0;
+}
+
+/* Assembly done / final video */
+.assembly-done-panel {
+  background: var(--bg-card);
+  border: 1px solid var(--gold-dim);
+  border-radius: var(--radius-lg);
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  align-items: center;
+}
+
+.assembly-done-header {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  align-self: stretch;
+}
+
+.assembly-done-icon {
+  font-size: 2rem;
+}
+
+.assembly-done-title {
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--gold);
+}
+
+.assembly-done-sub {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  margin-top: 2px;
+}
+
+.final-video-preview {
+  width: 100%;
+  max-width: 360px;
+  border-radius: var(--radius);
+  aspect-ratio: 9/16;
+  background: #000;
+}
+
+.btn-download {
+  padding: 12px 32px;
+  font-size: 1rem;
+}
+
 /* ─── Mobile ────────────────────────────────────────────────── */
 @media (max-width: 600px) {
   .app-header { padding: 12px 16px; }

@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { useParams, useSearchParams, useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
+import AssemblyPanel from '../components/AssemblyPanel'
 
 const API_BASE = import.meta.env.DEV ? 'http://localhost:3000' : ''
 const POLL_INTERVAL_MS = 5000
@@ -257,12 +258,12 @@ export default function ProjectPage() {
           </div>
         )}
 
-        {/* ── Images ready, video not started ── */}
-        {['images_ready'].includes(project.status) && phase === 'idle' && (
+        {/* ── Images ready, videos not started ── */}
+        {project.status === 'images_ready' && phase === 'idle' && (
           <div className="ready-banner">
             <div>
               <p className="ready-label">✓ All {total} images generated</p>
-              <p className="ready-sub">Ready to generate video clips via Seedance 2.0 Fast.</p>
+              <p className="ready-sub">Ready to generate video clips via Seedance 2.0 Fast. Each clip takes ~60–90 s.</p>
             </div>
             <button className="btn-primary" onClick={startVideoGeneration}>
               Generate Videos →
@@ -270,17 +271,15 @@ export default function ProjectPage() {
           </div>
         )}
 
-        {/* ── Videos ready ── */}
-        {['videos_ready'].includes(project.status) && phase === 'idle' && (
-          <div className="ready-banner success">
-            <div>
-              <p className="ready-label">✓ All {total} video clips generated</p>
-              <p className="ready-sub">Ready to assemble final video with audio and captions.</p>
-            </div>
-            <button className="btn-primary" disabled title="Coming in next milestone">
-              Assemble Final Video → <span className="chip">Next</span>
-            </button>
-          </div>
+        {/* ── Videos ready / assembly ── */}
+        {['videos_ready', 'assembling', 'complete'].includes(project.status) && phase === 'idle' && (
+          <AssemblyPanel
+            project={project}
+            scenes={scenes}
+            onComplete={(url) => {
+              setProject((p) => ({ ...p, status: 'complete', video_url: url }))
+            }}
+          />
         )}
 
         {/* ── Scenes grid ── */}
