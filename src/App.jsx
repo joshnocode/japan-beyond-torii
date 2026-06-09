@@ -2,6 +2,7 @@ import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import ProtectedRoute from './components/ProtectedRoute'
 import LoginPage from './pages/LoginPage'
 import DashboardPage from './pages/DashboardPage'
+import NewProjectPage from './pages/NewProjectPage'
 import './index.css'
 
 function App() {
@@ -14,6 +15,14 @@ function App() {
           element={
             <ProtectedRoute>
               <DashboardPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/new"
+          element={
+            <ProtectedRoute>
+              <NewProjectPage />
             </ProtectedRoute>
           }
         />

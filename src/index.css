@@ -397,6 +397,369 @@ h1, h2, h3, h4 {
   color: var(--text-muted);
 }
 
+/* ─── New Project Page ──────────────────────────────────────── */
+.new-project-main {
+  flex: 1;
+  max-width: 860px;
+  margin: 0 auto;
+  width: 100%;
+  padding: 32px 24px 64px;
+}
+
+.phase-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(13, 13, 13, 0.85);
+  backdrop-filter: blur(8px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+}
+
+.analyzing-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+  padding: 40px 48px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  text-align: center;
+}
+
+.analyzing-card h3 {
+  font-size: 1.1rem;
+  color: var(--gold);
+}
+
+.analyzing-card p {
+  font-size: 0.9rem;
+  color: var(--text-muted);
+  max-width: 280px;
+}
+
+.spinner.large {
+  width: 44px;
+  height: 44px;
+  border-width: 3px;
+}
+
+.input-panel-header {
+  margin-bottom: 24px;
+}
+
+.input-panel-header h2 {
+  font-size: 1.5rem;
+  margin-bottom: 6px;
+}
+
+.section-subtitle {
+  font-size: 0.9rem;
+  color: var(--text-muted);
+}
+
+.input-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  margin-bottom: 24px;
+}
+
+.label-optional {
+  font-weight: 400;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  text-transform: none;
+  letter-spacing: 0;
+  margin-left: 6px;
+}
+
+.word-count {
+  float: right;
+  font-weight: 400;
+  font-size: 0.75rem;
+  color: var(--gold-dim);
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+.script-textarea {
+  resize: vertical;
+  min-height: 240px;
+  line-height: 1.6;
+}
+
+.audio-drop-zone {
+  border: 1px dashed var(--border);
+  border-radius: var(--radius);
+  padding: 20px;
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+  background: var(--bg-input);
+}
+
+.audio-drop-zone:hover {
+  border-color: var(--gold-dim);
+  background: #1e1e1e;
+}
+
+.audio-drop-zone.has-file {
+  border-style: solid;
+  border-color: var(--gold-dim);
+}
+
+.audio-placeholder {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-muted);
+  font-size: 0.9rem;
+}
+
+.audio-placeholder span {
+  font-size: 1.8rem;
+}
+
+.audio-file-info {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.audio-icon {
+  font-size: 1.6rem;
+}
+
+.audio-name {
+  font-size: 0.9rem;
+  font-weight: 500;
+  color: var(--text);
+}
+
+.audio-size {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+
+.remove-audio {
+  margin-left: auto;
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  font-size: 1.2rem;
+  cursor: pointer;
+  line-height: 1;
+  padding: 4px 8px;
+}
+
+.remove-audio:hover {
+  color: var(--danger);
+}
+
+.btn-analyze {
+  width: 100%;
+  justify-content: center;
+  padding: 13px 20px;
+  font-size: 1rem;
+}
+
+/* ─── Brief Panel ────────────────────────────────────────────── */
+.brief-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 28px;
+}
+
+.brief-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.brief-title {
+  font-size: 1.5rem;
+  color: var(--text);
+}
+
+.brief-subtitle {
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  margin-top: 4px;
+}
+
+.brief-actions {
+  display: flex;
+  gap: 10px;
+  flex-shrink: 0;
+}
+
+.brief-stats {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+}
+
+.stat-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+}
+
+.stat-card.gold {
+  border-color: var(--gold-dim);
+  background: rgba(201, 168, 76, 0.06);
+}
+
+.stat-value {
+  font-size: 1.6rem;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.stat-card.gold .stat-value {
+  color: var(--gold);
+}
+
+.stat-label {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.brief-section {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.brief-section h3 {
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--gold);
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border);
+}
+
+.tone-summary {
+  font-size: 0.95rem;
+  color: var(--text-muted);
+  line-height: 1.7;
+}
+
+/* Cost table */
+.cost-table {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.cost-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 11px 16px;
+  font-size: 0.875rem;
+  color: var(--text-muted);
+  border-bottom: 1px solid var(--border);
+}
+
+.cost-row:last-child {
+  border-bottom: none;
+}
+
+.cost-row.total {
+  font-weight: 700;
+  color: var(--gold);
+  background: rgba(201, 168, 76, 0.06);
+  font-size: 0.95rem;
+}
+
+/* Scenes list */
+.scenes-list {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.scene-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.scene-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 16px;
+  background: rgba(201, 168, 76, 0.05);
+  border-bottom: 1px solid var(--border);
+}
+
+.scene-number {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--gold);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.scene-body {
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.scene-block {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.scene-block-label {
+  font-size: 0.7rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-muted);
+}
+
+.scene-excerpt {
+  font-size: 0.875rem;
+  color: var(--text);
+  font-style: italic;
+  line-height: 1.6;
+}
+
+.scene-prompt {
+  font-size: 0.825rem;
+  color: var(--text-muted);
+  line-height: 1.6;
+}
+
+.brief-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+
 /* ─── Mobile ────────────────────────────────────────────────── */
 @media (max-width: 600px) {
   .app-header { padding: 12px 16px; }
