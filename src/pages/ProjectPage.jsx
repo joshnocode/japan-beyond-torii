@@ -3,6 +3,7 @@ import { useParams, useSearchParams, useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 
 const API_BASE = import.meta.env.DEV ? 'http://localhost:3000' : ''
+const POLL_INTERVAL_MS = 5000
 
 export default function ProjectPage() {
   const { id } = useParams()
@@ -14,9 +15,10 @@ export default function ProjectPage() {
   const [scenes, setScenes] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
-  const [generating, setGenerating] = useState(false)
-  const [currentSceneIdx, setCurrentSceneIdx] = useState(null)
-  const generatingRef = useRef(false)
+  const [phase, setPhase] = useState('idle') // idle | images | videos
+  const [currentIdx, setCurrentIdx] = useState(null)
+  const [currentAction, setCurrentAction] = useState('') // 'Generating image…' | 'Queued' | 'Processing…'
+  const activeRef = useRef(false)
 
   useEffect(() => {
     loadProject()
@@ -29,46 +31,40 @@ export default function ProjectPage() {
   }, [loading])
 
   const loadProject = async () => {
-    const [{ data: proj, error: pErr }, { data: sc, error: sErr }] = await Promise.all([
+    const [{ data: proj }, { data: sc }] = await Promise.all([
       supabase.from('projects').select('*').eq('id', id).single(),
       supabase.from('scenes').select('*').eq('project_id', id).order('scene_index'),
     ])
-
-    if (pErr || !proj) {
-      setError('Project not found.')
-      setLoading(false)
-      return
-    }
-
+    if (!proj) { setError('Project not found.'); setLoading(false); return }
     setProject(proj)
     setScenes(sc || [])
     setLoading(false)
   }
 
-  const updateScene = (sceneId, patch) => {
+  const patchScene = (sceneId, patch) =>
     setScenes((prev) => prev.map((s) => (s.id === sceneId ? { ...s, ...patch } : s)))
-  }
 
+  const patchProject = (patch) => setProject((p) => ({ ...p, ...patch }))
+
+  // ── Image generation ─────────────────────────────────────────
   const startImageGeneration = async () => {
-    if (generatingRef.current) return
-    generatingRef.current = true
-    setGenerating(true)
+    if (activeRef.current) return
+    activeRef.current = true
+    setPhase('images')
     setError('')
 
     await supabase.from('projects').update({ status: 'processing' }).eq('id', id)
-    setProject((p) => ({ ...p, status: 'processing' }))
+    patchProject({ status: 'processing' })
 
     const pending = scenes.filter((s) => !s.image_url)
 
     for (const scene of pending) {
-      if (!generatingRef.current) break
-      setCurrentSceneIdx(scene.scene_index)
+      if (!activeRef.current) break
+      setCurrentIdx(scene.scene_index)
+      setCurrentAction('Generating image…')
 
-      await supabase
-        .from('scenes')
-        .update({ status: 'generating_image' })
-        .eq('id', scene.id)
-      updateScene(scene.id, { status: 'generating_image' })
+      await supabase.from('scenes').update({ status: 'generating_image' }).eq('id', scene.id)
+      patchScene(scene.id, { status: 'generating_image' })
 
       try {
         const res = await fetch(`${API_BASE}/api/generate-image`, {
@@ -76,63 +72,117 @@ export default function ProjectPage() {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ image_prompt: scene.image_prompt }),
         })
-
-        if (!res.ok) {
-          const { error: msg } = await res.json()
-          throw new Error(msg || `Server error ${res.status}`)
-        }
-
+        if (!res.ok) throw new Error((await res.json()).error || `HTTP ${res.status}`)
         const { image_url } = await res.json()
 
-        await supabase
-          .from('scenes')
-          .update({ image_url, status: 'complete' })
-          .eq('id', scene.id)
-        updateScene(scene.id, { image_url, status: 'complete' })
+        await supabase.from('scenes').update({ image_url, status: 'complete' }).eq('id', scene.id)
+        patchScene(scene.id, { image_url, status: 'complete' })
 
-        // Set project thumbnail from first scene
         if (scene.scene_index === 0) {
           await supabase.from('projects').update({ thumbnail_url: image_url }).eq('id', id)
-          setProject((p) => ({ ...p, thumbnail_url: image_url }))
+          patchProject({ thumbnail_url: image_url })
         }
       } catch (err) {
-        await supabase
-          .from('scenes')
-          .update({ status: 'error' })
-          .eq('id', scene.id)
-        updateScene(scene.id, { status: 'error' })
-        setError(`Scene ${scene.scene_index + 1} failed: ${err.message}`)
+        await supabase.from('scenes').update({ status: 'error' }).eq('id', scene.id)
+        patchScene(scene.id, { status: 'error' })
+        setError(`Scene ${scene.scene_index + 1} image failed: ${err.message}`)
       }
     }
 
-    // Check if all scenes have images
-    const { data: finalScenes } = await supabase
-      .from('scenes')
-      .select('image_url, status')
-      .eq('project_id', id)
-
-    const allDone = finalScenes?.every((s) => s.image_url)
-    const newStatus = allDone ? 'images_ready' : 'processing'
-
+    const allImages = (await supabase.from('scenes').select('image_url').eq('project_id', id)).data
+    const newStatus = allImages?.every((s) => s.image_url) ? 'images_ready' : 'processing'
     await supabase.from('projects').update({ status: newStatus }).eq('id', id)
-    setProject((p) => ({ ...p, status: newStatus }))
+    patchProject({ status: newStatus })
 
-    generatingRef.current = false
-    setGenerating(false)
-    setCurrentSceneIdx(null)
+    activeRef.current = false
+    setPhase('idle')
+    setCurrentIdx(null)
   }
 
-  const stopGeneration = () => {
-    generatingRef.current = false
+  // ── Video generation ─────────────────────────────────────────
+  const startVideoGeneration = async () => {
+    if (activeRef.current) return
+    activeRef.current = true
+    setPhase('videos')
+    setError('')
+
+    await supabase.from('projects').update({ status: 'generating_videos' }).eq('id', id)
+    patchProject({ status: 'generating_videos' })
+
+    // Use latest scenes state from Supabase (in case images were done in a previous session)
+    const { data: freshScenes } = await supabase
+      .from('scenes')
+      .select('*')
+      .eq('project_id', id)
+      .order('scene_index')
+    const pending = (freshScenes || []).filter((s) => s.image_url && !s.video_url)
+
+    for (const scene of pending) {
+      if (!activeRef.current) break
+      setCurrentIdx(scene.scene_index)
+      setCurrentAction('Submitting to queue…')
+
+      await supabase.from('scenes').update({ status: 'generating_video' }).eq('id', scene.id)
+      patchScene(scene.id, { status: 'generating_video' })
+
+      try {
+        // Submit
+        const submitRes = await fetch(`${API_BASE}/api/submit-video`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            image_url: scene.image_url,
+            motion_prompt: scene.motion_prompt,
+          }),
+        })
+        if (!submitRes.ok) throw new Error((await submitRes.json()).error || `HTTP ${submitRes.status}`)
+        const { request_id } = await submitRes.json()
+        setCurrentAction('In queue…')
+
+        // Poll
+        let video_url = null
+        while (activeRef.current) {
+          await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS))
+          const pollRes = await fetch(`${API_BASE}/api/poll-video?request_id=${encodeURIComponent(request_id)}`)
+          if (!pollRes.ok) throw new Error(`Poll HTTP ${pollRes.status}`)
+          const data = await pollRes.json()
+
+          if (data.status === 'in_progress') setCurrentAction('Generating video…')
+          if (data.status === 'done') { video_url = data.video_url; break }
+          if (data.status === 'error') throw new Error(data.error || 'Video generation failed')
+        }
+
+        if (!video_url) throw new Error('No video URL returned')
+
+        await supabase.from('scenes').update({ video_url, status: 'complete' }).eq('id', scene.id)
+        patchScene(scene.id, { video_url, status: 'complete' })
+      } catch (err) {
+        await supabase.from('scenes').update({ status: 'error' }).eq('id', scene.id)
+        patchScene(scene.id, { status: 'error' })
+        setError(`Scene ${scene.scene_index + 1} video failed: ${err.message}`)
+      }
+    }
+
+    const allVideos = (await supabase.from('scenes').select('video_url').eq('project_id', id)).data
+    const newStatus = allVideos?.every((s) => s.video_url) ? 'videos_ready' : 'generating_videos'
+    await supabase.from('projects').update({ status: newStatus }).eq('id', id)
+    patchProject({ status: newStatus })
+
+    activeRef.current = false
+    setPhase('idle')
+    setCurrentIdx(null)
   }
 
-  if (loading) {
-    return (
-      <div className="full-screen-loading">
-        <div className="spinner" />
-      </div>
-    )
-  }
+  // ── Derived state ─────────────────────────────────────────────
+  const imgDone = scenes.filter((s) => s.image_url).length
+  const vidDone = scenes.filter((s) => s.video_url).length
+  const total = scenes.length
+  const imgPct = total > 0 ? Math.round((imgDone / total) * 100) : 0
+  const vidPct = total > 0 ? Math.round((vidDone / total) * 100) : 0
+  const allImagesReady = imgDone === total && total > 0
+  const allVideosReady = vidDone === total && total > 0
+
+  if (loading) return <div className="full-screen-loading"><div className="spinner" /></div>
 
   if (!project) {
     return (
@@ -140,17 +190,13 @@ export default function ProjectPage() {
         <header className="app-header">
           <button className="btn-ghost" onClick={() => navigate('/dashboard')}>← Back</button>
         </header>
-        <main className="new-project-main">
+        <main className="project-main">
           <p className="error-message">{error || 'Project not found.'}</p>
         </main>
       </div>
     )
   }
 
-  const doneCount = scenes.filter((s) => s.image_url).length
-  const totalCount = scenes.length
-  const progressPct = totalCount > 0 ? Math.round((doneCount / totalCount) * 100) : 0
-  const allImagesReady = doneCount === totalCount && totalCount > 0
   const brief = project.brief
 
   return (
@@ -159,43 +205,42 @@ export default function ProjectPage() {
         <div className="header-left">
           <button className="btn-ghost" onClick={() => navigate('/dashboard')}>← Dashboard</button>
           <span className="header-brand-mark">⛩</span>
-          <span className="header-brand">{project.title || 'Untitled Project'}</span>
+          <span className="header-brand">{project.title || 'Untitled'}</span>
         </div>
         <div className="header-right">
           <span className="project-status-badge" data-status={project.status}>
-            {statusLabel(project.status)}
+            {STATUS_LABELS[project.status] ?? project.status}
           </span>
         </div>
       </header>
 
       <main className="project-main">
 
-        {/* ── Generating state ── */}
-        {generating && (
-          <div className="generation-banner">
-            <div className="gen-progress-info">
-              <div className="spinner" />
-              <div>
-                <p className="gen-label">Generating Images</p>
-                <p className="gen-detail">
-                  Scene {(currentSceneIdx ?? 0) + 1} of {totalCount} — FLUX 1.1 Pro Ultra
-                </p>
-              </div>
-            </div>
-            <div className="gen-progress-bar-wrap">
-              <div className="gen-progress-bar" style={{ width: `${progressPct}%` }} />
-            </div>
-            <div className="gen-counts">
-              {doneCount} / {totalCount} complete
-            </div>
-          </div>
+        {/* ── Active progress banner ── */}
+        {phase === 'images' && (
+          <ProgressBanner
+            label="Generating Images"
+            detail={`Scene ${(currentIdx ?? 0) + 1} of ${total} — ${currentAction}`}
+            pct={imgPct}
+            done={imgDone}
+            total={total}
+          />
+        )}
+        {phase === 'videos' && (
+          <ProgressBanner
+            label="Generating Videos"
+            detail={`Scene ${(currentIdx ?? 0) + 1} of ${total} — ${currentAction}`}
+            pct={vidPct}
+            done={vidDone}
+            total={total}
+          />
         )}
 
         {/* ── Error ── */}
         {error && <p className="error-message project-error">{error}</p>}
 
-        {/* ── Draft state ── */}
-        {project.status === 'draft' && !generating && brief && (
+        {/* ── Draft call-to-action ── */}
+        {project.status === 'draft' && phase === 'idle' && brief && (
           <div className="draft-panel">
             <div className="draft-header">
               <div>
@@ -212,15 +257,28 @@ export default function ProjectPage() {
           </div>
         )}
 
-        {/* ── All images ready ── */}
-        {allImagesReady && !generating && (
+        {/* ── Images ready, video not started ── */}
+        {['images_ready'].includes(project.status) && phase === 'idle' && (
           <div className="ready-banner">
             <div>
-              <p className="ready-label">All {totalCount} images generated</p>
-              <p className="ready-sub">Ready to generate video clips from each scene.</p>
+              <p className="ready-label">✓ All {total} images generated</p>
+              <p className="ready-sub">Ready to generate video clips via Seedance 2.0 Fast.</p>
+            </div>
+            <button className="btn-primary" onClick={startVideoGeneration}>
+              Generate Videos →
+            </button>
+          </div>
+        )}
+
+        {/* ── Videos ready ── */}
+        {['videos_ready'].includes(project.status) && phase === 'idle' && (
+          <div className="ready-banner success">
+            <div>
+              <p className="ready-label">✓ All {total} video clips generated</p>
+              <p className="ready-sub">Ready to assemble final video with audio and captions.</p>
             </div>
             <button className="btn-primary" disabled title="Coming in next milestone">
-              Generate Videos → <span className="chip">Next</span>
+              Assemble Final Video → <span className="chip">Next</span>
             </button>
           </div>
         )}
@@ -228,52 +286,31 @@ export default function ProjectPage() {
         {/* ── Scenes grid ── */}
         <div className="scenes-generation-grid">
           {scenes.map((scene) => {
-            const isActive = generating && scene.scene_index === currentSceneIdx
+            const isActive = phase !== 'idle' && scene.scene_index === currentIdx
             return (
-              <div
+              <SceneCard
                 key={scene.id}
-                className={`gen-scene-card ${isActive ? 'active' : ''} ${scene.image_url ? 'done' : ''}`}
-              >
-                <div className="gen-scene-thumb">
-                  {scene.image_url ? (
-                    <img src={scene.image_url} alt={`Scene ${scene.scene_index + 1}`} />
-                  ) : isActive ? (
-                    <div className="gen-scene-loading">
-                      <div className="spinner" />
-                      <p>Generating…</p>
-                    </div>
-                  ) : (
-                    <div className="gen-scene-placeholder">
-                      <span>{scene.scene_index + 1}</span>
-                    </div>
-                  )}
-                  {scene.image_url && (
-                    <div className="gen-scene-done-badge">✓</div>
-                  )}
-                  {scene.status === 'error' && (
-                    <div className="gen-scene-error-badge">!</div>
-                  )}
-                </div>
-                <div className="gen-scene-info">
-                  <p className="gen-scene-label">Scene {scene.scene_index + 1}</p>
-                  <p className="gen-scene-desc">{scene.description}</p>
-                </div>
-              </div>
+                scene={scene}
+                isActive={isActive}
+                activeAction={currentAction}
+                phase={phase}
+              />
             )
           })}
         </div>
 
-        {/* ── Brief detail (collapsed) ── */}
+        {/* ── Collapsible brief ── */}
         {brief && (
           <details className="brief-detail-section">
-            <summary>View full scene brief</summary>
+            <summary>View scene prompts</summary>
             <div className="brief-detail-body">
               {scenes.map((scene, i) => (
                 <div key={scene.id} className="brief-detail-row">
                   <span className="scene-number">Scene {i + 1}</span>
                   <div>
                     <p className="scene-excerpt">"{brief.scenes[i]?.script_excerpt}"</p>
-                    <p className="scene-prompt" style={{ marginTop: 6 }}>{scene.image_prompt}</p>
+                    <p className="scene-prompt" style={{ marginTop: 6 }}><strong>Image:</strong> {scene.image_prompt}</p>
+                    <p className="scene-prompt" style={{ marginTop: 4 }}><strong>Motion:</strong> {scene.motion_prompt}</p>
                   </div>
                 </div>
               ))}
@@ -285,12 +322,83 @@ export default function ProjectPage() {
   )
 }
 
-function statusLabel(s) {
-  return {
-    draft: 'Draft',
-    processing: 'Generating…',
-    images_ready: 'Images Ready',
-    complete: 'Complete',
-    error: 'Error',
-  }[s] ?? s
+// ── Sub-components ─────────────────────────────────────────────
+function ProgressBanner({ label, detail, pct, done, total }) {
+  return (
+    <div className="generation-banner">
+      <div className="gen-progress-info">
+        <div className="spinner" />
+        <div>
+          <p className="gen-label">{label}</p>
+          <p className="gen-detail">{detail}</p>
+        </div>
+      </div>
+      <div className="gen-progress-bar-wrap">
+        <div className="gen-progress-bar" style={{ width: `${pct}%` }} />
+      </div>
+      <div className="gen-counts">{done} / {total} complete</div>
+    </div>
+  )
+}
+
+function SceneCard({ scene, isActive, activeAction, phase }) {
+  const hasVideo = !!scene.video_url
+  const hasImage = !!scene.image_url
+  const isImgActive = isActive && phase === 'images'
+  const isVidActive = isActive && phase === 'videos'
+
+  return (
+    <div className={`gen-scene-card ${isActive ? 'active' : ''} ${hasVideo ? 'has-video' : hasImage ? 'done' : ''}`}>
+      <div className="gen-scene-thumb">
+        {hasVideo ? (
+          <video
+            src={scene.video_url}
+            loop
+            muted
+            playsInline
+            autoPlay
+            className="scene-video"
+          />
+        ) : hasImage ? (
+          <>
+            <img src={scene.image_url} alt={`Scene ${scene.scene_index + 1}`} />
+            {isVidActive && (
+              <div className="gen-scene-video-overlay">
+                <div className="spinner" />
+                <p>{activeAction}</p>
+              </div>
+            )}
+          </>
+        ) : isImgActive ? (
+          <div className="gen-scene-loading">
+            <div className="spinner" />
+            <p>{activeAction}</p>
+          </div>
+        ) : (
+          <div className="gen-scene-placeholder">
+            <span>{scene.scene_index + 1}</span>
+          </div>
+        )}
+
+        {hasVideo && <div className="gen-scene-done-badge video">▶</div>}
+        {!hasVideo && hasImage && <div className="gen-scene-done-badge">✓</div>}
+        {scene.status === 'error' && <div className="gen-scene-error-badge">!</div>}
+      </div>
+      <div className="gen-scene-info">
+        <p className="gen-scene-label">Scene {scene.scene_index + 1}</p>
+        <p className="gen-scene-desc">{scene.description}</p>
+      </div>
+    </div>
+  )
+}
+
+const STATUS_LABELS = {
+  draft: 'Draft',
+  processing: 'Generating Images…',
+  images_ready: 'Images Ready',
+  generating_videos: 'Generating Videos…',
+  videos_ready: 'Videos Ready',
+  assembling: 'Assembling…',
+  complete: 'Complete',
+  error: 'Error',
 }
