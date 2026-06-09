@@ -1095,6 +1095,114 @@ h1, h2, h3, h4 {
   border-bottom: none;
 }
 
+/* ─── Dashboard M6 ──────────────────────────────────────────── */
+.dashboard-subtitle {
+  font-size: 0.82rem;
+  color: var(--text-muted);
+  margin-top: 4px;
+}
+
+.project-meta-right {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.project-cost {
+  color: var(--text-muted);
+}
+
+.project-delete-btn {
+  background: none;
+  border: none;
+  color: transparent;
+  font-size: 0.75rem;
+  cursor: pointer;
+  padding: 2px 4px;
+  border-radius: 3px;
+  line-height: 1;
+  transition: color 0.15s, background 0.15s;
+}
+
+.project-card:hover .project-delete-btn {
+  color: var(--text-muted);
+}
+
+.project-delete-btn:hover {
+  color: var(--danger) !important;
+  background: rgba(192, 57, 43, 0.1);
+}
+
+.project-card.deleting {
+  opacity: 0.4;
+  pointer-events: none;
+}
+
+.project-download-overlay {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  width: 30px;
+  height: 30px;
+  background: var(--gold);
+  color: #0d0d0d;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.85rem;
+  font-weight: 700;
+  text-decoration: none;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+
+.project-card:hover .project-download-overlay {
+  opacity: 1;
+}
+
+/* ─── Audio Uploader Panel ───────────────────────────────────── */
+.audio-uploader-panel {
+  background: var(--bg-card);
+  border: 1px solid #2a2a1a;
+  border-radius: var(--radius-lg);
+  padding: 20px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.audio-uploader-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+}
+
+.audio-uploader-title {
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.audio-uploader-sub {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  margin-top: 3px;
+}
+
+/* ─── Danger ghost button ────────────────────────────────────── */
+.btn-danger-ghost {
+  color: var(--text-muted);
+  border-color: var(--border);
+  font-size: 0.8rem;
+  padding: 6px 12px;
+}
+
+.btn-danger-ghost:hover {
+  color: var(--danger) !important;
+  border-color: var(--danger) !important;
+}
+
 /* ─── Assembly Panel ────────────────────────────────────────── */
 .assembly-panel {
   background: var(--bg-card);

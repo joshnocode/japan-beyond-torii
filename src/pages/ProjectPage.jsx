@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react'
 import { useParams, useSearchParams, useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import AssemblyPanel from '../components/AssemblyPanel'
+import AudioUploader from '../components/AudioUploader'
 
 const API_BASE = import.meta.env.DEV ? 'http://localhost:3000' : ''
 const POLL_INTERVAL_MS = 5000
@@ -174,6 +175,18 @@ export default function ProjectPage() {
     setCurrentIdx(null)
   }
 
+  // ── Delete project ────────────────────────────────────────────
+  const handleDelete = async () => {
+    if (!window.confirm(`Delete "${project.title || 'this project'}"? This cannot be undone.`)) return
+    const prefix = `${project.user_id}/${project.id}`
+    const { data: files } = await supabase.storage.from('project-assets').list(prefix)
+    if (files?.length) {
+      await supabase.storage.from('project-assets').remove(files.map((f) => `${prefix}/${f.name}`))
+    }
+    await supabase.from('projects').delete().eq('id', project.id)
+    navigate('/dashboard')
+  }
+
   // ── Derived state ─────────────────────────────────────────────
   const imgDone = scenes.filter((s) => s.image_url).length
   const vidDone = scenes.filter((s) => s.video_url).length
@@ -212,6 +225,9 @@ export default function ProjectPage() {
           <span className="project-status-badge" data-status={project.status}>
             {STATUS_LABELS[project.status] ?? project.status}
           </span>
+          <button className="btn-ghost btn-danger-ghost" onClick={handleDelete} title="Delete project">
+            Delete
+          </button>
         </div>
       </header>
 
@@ -269,6 +285,14 @@ export default function ProjectPage() {
               Generate Videos →
             </button>
           </div>
+        )}
+
+        {/* ── Audio upload (when missing and videos are ready) ── */}
+        {['videos_ready', 'assembling'].includes(project.status) && !project.audio_url && phase === 'idle' && (
+          <AudioUploader
+            project={project}
+            onUploaded={(url) => patchProject({ audio_url: url })}
+          />
         )}
 
         {/* ── Videos ready / assembly ── */}
