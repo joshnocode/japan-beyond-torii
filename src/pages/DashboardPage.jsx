@@ -89,9 +89,14 @@ export default function DashboardPage() {
               </p>
             )}
           </div>
-          <button className="btn-primary" onClick={() => navigate('/new')}>
-            + New Video
-          </button>
+          <div style={{ display: 'flex', gap: 10 }}>
+            <button className="btn-ghost" onClick={() => navigate('/import')}>
+              Import JSON
+            </button>
+            <button className="btn-primary" onClick={() => navigate('/new')}>
+              + New Video
+            </button>
+          </div>
         </div>
 
         {loadingProjects ? (
