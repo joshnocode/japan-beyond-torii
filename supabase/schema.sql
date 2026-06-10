@@ -3,7 +3,7 @@ create table if not exists public.projects (
   id uuid primary key default gen_random_uuid(),
   user_id uuid references auth.users(id) on delete cascade not null,
   title text,
-  status text default 'draft' check (status in ('draft','processing','complete','error')),
+  status text default 'draft' check (status in ('draft','processing','images_ready','generating_videos','videos_ready','assembling','complete','error')),
   script text,
   brief jsonb,
   cost_cents integer,

@@ -290,6 +290,18 @@ export default function ProjectPage() {
   const imgPct  = total > 0 ? Math.round((imgDone / total) * 100) : 0
   const vidPct  = total > 0 ? Math.round((vidDone / total) * 100) : 0
 
+  // Derive effective status from scene data when DB status is stale
+  // (handles imported projects and cases where DB constraint blocked status updates)
+  const deriveStatus = () => {
+    const s = project.status
+    if (s === 'complete' || s === 'assembling') return s
+    if (total > 0 && vidDone === total) return 'videos_ready'
+    if (total > 0 && vidDone > 0) return 'videos_ready'
+    if (total > 0 && imgDone === total) return 'images_ready'
+    return s
+  }
+  const effectiveStatus = phase === 'idle' ? deriveStatus() : project.status
+
   const formatEta = (remainingScenes) => {
     if (!avgSceneMs || remainingScenes <= 0) return null
     const etaSec = Math.round((remainingScenes * avgSceneMs) / 1000)
@@ -323,8 +335,8 @@ export default function ProjectPage() {
           <span className="header-brand">{project.title || 'Untitled'}</span>
         </div>
         <div className="header-right">
-          <span className="project-status-badge" data-status={project.status}>
-            {STATUS_LABELS[project.status] ?? project.status}
+          <span className="project-status-badge" data-status={effectiveStatus}>
+            {STATUS_LABELS[effectiveStatus] ?? effectiveStatus}
           </span>
           <button className="btn-ghost btn-danger-ghost" onClick={handleDelete}>Delete</button>
         </div>
@@ -333,7 +345,7 @@ export default function ProjectPage() {
       <main className="project-main">
 
         {/* ── Step tracker ── */}
-        <StepTracker project={project} phase={phase} />
+        <StepTracker status={effectiveStatus} phase={phase} />
 
         {/* ── Active progress banner ── */}
         {phase === 'images' && (
@@ -361,7 +373,7 @@ export default function ProjectPage() {
         {error && <p className="error-message project-error">{error}</p>}
 
         {/* ── Draft CTA ── */}
-        {project.status === 'draft' && phase === 'idle' && brief && (
+        {effectiveStatus === 'draft' && phase === 'idle' && brief && (
           <div className="draft-panel">
             <div className="draft-header">
               <div>
@@ -377,7 +389,7 @@ export default function ProjectPage() {
         )}
 
         {/* ── Images ready ── */}
-        {project.status === 'images_ready' && phase === 'idle' && (
+        {effectiveStatus === 'images_ready' && phase === 'idle' && (
           <div className="ready-banner">
             <div>
               <p className="ready-label">✓ All {total} images generated</p>
@@ -388,12 +400,12 @@ export default function ProjectPage() {
         )}
 
         {/* ── Audio upload ── */}
-        {['videos_ready', 'assembling'].includes(project.status) && !project.audio_url && phase === 'idle' && (
+        {['videos_ready', 'assembling'].includes(effectiveStatus) && !project.audio_url && phase === 'idle' && (
           <AudioUploader project={project} onUploaded={url => patchProject({ audio_url: url })} />
         )}
 
         {/* ── Assembly ── */}
-        {['videos_ready', 'assembling', 'complete'].includes(project.status) && phase === 'idle' && (
+        {['videos_ready', 'assembling', 'complete'].includes(effectiveStatus) && phase === 'idle' && (
           <AssemblyPanel
             project={project}
             scenes={scenes}
@@ -455,8 +467,8 @@ function getActiveStep(status, phase) {
   return 'script'
 }
 
-function StepTracker({ project, phase }) {
-  const active = getActiveStep(project.status, phase)
+function StepTracker({ status, phase }) {
+  const active = getActiveStep(status, phase)
   const stepKeys = STEPS.map(s => s.key)
   const activeIdx = active === 'done' ? stepKeys.length : stepKeys.indexOf(active)
 
