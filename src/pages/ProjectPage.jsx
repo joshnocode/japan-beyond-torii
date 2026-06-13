@@ -390,7 +390,7 @@ export default function ProjectPage() {
 
   const deriveStatus = () => {
     const s = project.status
-    if (s === 'complete' || s === 'assembling') return s
+    if (s === 'complete' || s === 'assembling' || s === 'generating_videos') return s
     if (total > 0 && vidDone === total) return 'videos_ready'
     if (total > 0 && vidDone > 0) return 'videos_ready'
     if (total > 0 && imgDone === total) return 'images_ready'
@@ -477,6 +477,17 @@ export default function ProjectPage() {
               <p className="ready-sub">{scenes.filter(s => !s.image_url).length} scene{scenes.filter(s => !s.image_url).length !== 1 ? 's' : ''} still need images.</p>
             </div>
             <button className="btn-primary" onClick={startImageGeneration}>Resume →</button>
+          </div>
+        )}
+
+        {/* ── Resume interrupted video generation ── */}
+        {effectiveStatus === 'generating_videos' && phase === 'idle' && scenes.some(s => s.image_url && !s.video_url) && (
+          <div className="ready-banner">
+            <div>
+              <p className="ready-label">Video generation interrupted</p>
+              <p className="ready-sub">{scenes.filter(s => s.image_url && !s.video_url).length} scene{scenes.filter(s => s.image_url && !s.video_url).length !== 1 ? 's' : ''} still need video.</p>
+            </div>
+            <button className="btn-primary" onClick={startVideoGeneration}>Resume →</button>
           </div>
         )}
 
