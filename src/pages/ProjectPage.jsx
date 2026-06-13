@@ -197,6 +197,8 @@ export default function ProjectPage() {
     setPhase('idle')
     setCurrentIdx(null)
     sceneStartRef.current = null
+
+    if (newStatus === 'images_ready') await startVideoGeneration()
   }
 
   // ── Video generation ──────────────────────────────────────────
@@ -283,10 +285,19 @@ export default function ProjectPage() {
       }
 
       const { data: allImages } = await supabase.from('scenes').select('image_url').eq('project_id', id)
-      if (allImages?.every(s => s.image_url)) {
+      const allReady = allImages?.every(s => s.image_url)
+      if (allReady) {
         await supabase.from('projects').update({ status: 'images_ready' }).eq('id', id)
         patchProject({ status: 'images_ready' })
       }
+
+      activeRef.current = false
+      setPhase('idle')
+      setCurrentIdx(null)
+      sceneStartRef.current = null
+
+      if (allReady) await startVideoGeneration()
+      return
     } catch (err) {
       await supabase.from('scenes').update({ status: 'error' }).eq('id', scene.id)
       patchScene(scene.id, { status: 'error' })
