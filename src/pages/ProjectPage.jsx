@@ -232,7 +232,55 @@ export default function ProjectPage() {
     sceneStartRef.current = null
   }
 
-  // ── Single-scene retry ────────────────────────────────────────
+  // ── Single-scene image retry ──────────────────────────────────
+  const retrySingleImage = useCallback(async (scene) => {
+    if (activeRef.current) return
+    activeRef.current = true
+    setPhase('images')
+    setCurrentIdx(scene.scene_index)
+    setCurrentAction('Generating image…')
+    sceneStartRef.current = Date.now()
+    setElapsedSeconds(0)
+    setError('')
+
+    await supabase.from('scenes').update({ status: 'generating_image' }).eq('id', scene.id)
+    patchScene(scene.id, { status: 'generating_image' })
+
+    try {
+      const res = await fetch(`${API_BASE}/api/generate-image`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ image_prompt: scene.image_prompt }),
+      })
+      if (!res.ok) throw new Error((await res.json()).error || `HTTP ${res.status}`)
+      const { image_url } = await res.json()
+
+      await supabase.from('scenes').update({ image_url, status: 'complete' }).eq('id', scene.id)
+      patchScene(scene.id, { image_url, status: 'complete' })
+
+      if (scene.scene_index === 0) {
+        await supabase.from('projects').update({ thumbnail_url: image_url }).eq('id', id)
+        patchProject({ thumbnail_url: image_url })
+      }
+
+      const { data: allImages } = await supabase.from('scenes').select('image_url').eq('project_id', id)
+      if (allImages?.every(s => s.image_url)) {
+        await supabase.from('projects').update({ status: 'images_ready' }).eq('id', id)
+        patchProject({ status: 'images_ready' })
+      }
+    } catch (err) {
+      await supabase.from('scenes').update({ status: 'error' }).eq('id', scene.id)
+      patchScene(scene.id, { status: 'error' })
+      setError(`Scene ${scene.scene_index + 1} image retry failed: ${err.message}`)
+    }
+
+    activeRef.current = false
+    setPhase('idle')
+    setCurrentIdx(null)
+    sceneStartRef.current = null
+  }, [id])
+
+  // ── Single-scene video retry ──────────────────────────────────
   const retrySingleScene = useCallback(async (scene) => {
     if (activeRef.current) return
     activeRef.current = true
@@ -271,6 +319,11 @@ export default function ProjectPage() {
     setCurrentIdx(null)
     sceneStartRef.current = null
   }, [id, pollVideoWithRetry])
+
+  const handleSceneRetry = useCallback((scene) => {
+    if (!scene.image_url) return retrySingleImage(scene)
+    return retrySingleScene(scene)
+  }, [retrySingleImage, retrySingleScene])
 
   const handleDelete = async () => {
     if (!window.confirm(`Delete "${project.title || 'this project'}"? This cannot be undone.`)) return
@@ -423,7 +476,7 @@ export default function ProjectPage() {
               activeAction={currentAction}
               phase={phase}
               idlePhase={phase === 'idle'}
-              onRetry={retrySingleScene}
+              onRetry={handleSceneRetry}
             />
           ))}
         </div>
