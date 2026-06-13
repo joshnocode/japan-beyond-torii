@@ -581,6 +581,7 @@ export default function ProjectPage() {
             <SceneCard
               key={scene.id}
               scene={scene}
+              scriptExcerpt={brief?.scenes?.[scene.scene_index]?.script_excerpt}
               isActive={phase !== 'idle' && scene.scene_index === currentIdx}
               activeAction={currentAction}
               phase={phase}
@@ -674,7 +675,7 @@ function ProgressBanner({ step, detail, pct, done, total, eta }) {
 }
 
 // ── Scene card ─────────────────────────────────────────────────
-function SceneCard({ scene, isActive, activeAction, phase, idlePhase, onRetry }) {
+function SceneCard({ scene, scriptExcerpt, isActive, activeAction, phase, idlePhase, onRetry }) {
   const [expanded, setExpanded] = useState(false)
   const hasVideo = !!scene.video_url
   const hasImage = !!scene.image_url
@@ -750,10 +751,10 @@ function SceneCard({ scene, isActive, activeAction, phase, idlePhase, onRetry })
             ) : null}
 
             <div className="scene-detail-body">
-              {scene.description && (
+              {scriptExcerpt && (
                 <div className="scene-detail-row">
-                  <span className="scene-detail-label">Description</span>
-                  <p className="scene-detail-value">{scene.description}</p>
+                  <span className="scene-detail-label">Narration</span>
+                  <p className="scene-detail-value">{scriptExcerpt}</p>
                 </div>
               )}
               {scene.image_prompt && (
