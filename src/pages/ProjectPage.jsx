@@ -8,6 +8,7 @@ const API_BASE = import.meta.env.DEV ? 'http://localhost:3000' : ''
 const POLL_INTERVAL_MS = 5000
 const VIDEO_TIMEOUT_MS = 3 * 60 * 1000  // 3 minutes before retry
 const MAX_VIDEO_RETRIES = 2
+const MAX_IMAGE_RETRIES = 4
 
 const STATUS_LABELS = {
   draft: 'Draft',
@@ -76,6 +77,31 @@ export default function ProjectPage() {
   const patchScene   = (sceneId, patch) => setScenes(prev => prev.map(s => s.id === sceneId ? { ...s, ...patch } : s))
   const patchProject = (patch) => setProject(p => ({ ...p, ...patch }))
 
+  // ── Image generation with auto-retry ─────────────────────────
+  const generateImageWithRetry = useCallback(async (scene) => {
+    let lastErr
+    for (let attempt = 0; attempt <= MAX_IMAGE_RETRIES; attempt++) {
+      if (attempt > 0) {
+        setCurrentAction(`Retry ${attempt}/${MAX_IMAGE_RETRIES}…`)
+        await new Promise(r => setTimeout(r, 2000))
+      }
+      try {
+        setCurrentAction(attempt === 0 ? 'Generating image…' : `Retrying (${attempt}/${MAX_IMAGE_RETRIES})…`)
+        const res = await fetch(`${API_BASE}/api/generate-image`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ image_prompt: scene.image_prompt }),
+        })
+        if (!res.ok) throw new Error((await res.json()).error || `HTTP ${res.status}`)
+        const { image_url } = await res.json()
+        return image_url
+      } catch (err) {
+        lastErr = err
+      }
+    }
+    throw lastErr
+  }, [])
+
   // ── Video polling with 3-min timeout + retry ─────────────────
   const pollVideoWithRetry = useCallback(async (scene) => {
     let lastErr
@@ -141,13 +167,7 @@ export default function ProjectPage() {
       patchScene(scene.id, { status: 'generating_image' })
 
       try {
-        const res = await fetch(`${API_BASE}/api/generate-image`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ image_prompt: scene.image_prompt }),
-        })
-        if (!res.ok) throw new Error((await res.json()).error || `HTTP ${res.status}`)
-        const { image_url } = await res.json()
+        const image_url = await generateImageWithRetry(scene)
 
         const t = Date.now() - sceneStartRef.current
         const times = [...sceneTimesRef.current, t]
@@ -252,13 +272,7 @@ export default function ProjectPage() {
     patchScene(scene.id, { status: 'generating_image' })
 
     try {
-      const res = await fetch(`${API_BASE}/api/generate-image`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ image_prompt: scene.image_prompt }),
-      })
-      if (!res.ok) throw new Error((await res.json()).error || `HTTP ${res.status}`)
-      const { image_url } = await res.json()
+      const image_url = await generateImageWithRetry(scene)
 
       await supabase.from('scenes').update({ image_url, status: 'complete' }).eq('id', scene.id)
       patchScene(scene.id, { image_url, status: 'complete' })
@@ -283,7 +297,7 @@ export default function ProjectPage() {
     setPhase('idle')
     setCurrentIdx(null)
     sceneStartRef.current = null
-  }, [id])
+  }, [id, generateImageWithRetry])
 
   // ── Single-scene video retry ──────────────────────────────────
   const retrySingleScene = useCallback(async (scene) => {
