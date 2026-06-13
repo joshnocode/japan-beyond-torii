@@ -341,6 +341,21 @@ export default function ProjectPage() {
     navigate('/dashboard')
   }
 
+  if (loading) return <div className="full-screen-loading"><div className="spinner" /></div>
+
+  if (!project) {
+    return (
+      <div className="app-layout">
+        <header className="app-header">
+          <button className="btn-ghost" onClick={() => navigate('/dashboard')}>← Back</button>
+        </header>
+        <main className="project-main">
+          <p className="error-message">{error || 'Project not found.'}</p>
+        </main>
+      </div>
+    )
+  }
+
   // ── Derived state ─────────────────────────────────────────────
   const imgDone = scenes.filter(s => s.image_url).length
   const vidDone = scenes.filter(s => s.video_url).length
@@ -348,8 +363,6 @@ export default function ProjectPage() {
   const imgPct  = total > 0 ? Math.round((imgDone / total) * 100) : 0
   const vidPct  = total > 0 ? Math.round((vidDone / total) * 100) : 0
 
-  // Derive effective status from scene data when DB status is stale
-  // (handles imported projects and cases where DB constraint blocked status updates)
   const deriveStatus = () => {
     const s = project.status
     if (s === 'complete' || s === 'assembling') return s
@@ -365,21 +378,6 @@ export default function ProjectPage() {
     const etaSec = Math.round((remainingScenes * avgSceneMs) / 1000)
     if (etaSec < 60) return `~${etaSec}s`
     return `~${Math.ceil(etaSec / 60)}m`
-  }
-
-  if (loading) return <div className="full-screen-loading"><div className="spinner" /></div>
-
-  if (!project) {
-    return (
-      <div className="app-layout">
-        <header className="app-header">
-          <button className="btn-ghost" onClick={() => navigate('/dashboard')}>← Back</button>
-        </header>
-        <main className="project-main">
-          <p className="error-message">{error || 'Project not found.'}</p>
-        </main>
-      </div>
-    )
   }
 
   const brief = project.brief
