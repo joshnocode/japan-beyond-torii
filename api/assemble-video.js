@@ -123,7 +123,9 @@ export default async function handler(req, res) {
     // Step 2: encode — ultrafast preset to stay within timeout
     const srtPath = join(jobDir, 'subs.srt')
     const outputPath = join(jobDir, 'output.mp4')
-    const subFilter = `subtitles=${srtPath}:force_style='FontSize=22,PrimaryColour=&HFFFFFF&,OutlineColour=&H00000000,Outline=2,BorderStyle=1,Alignment=2,MarginV=50'`
+    // scale=720:-2 caps width at 720px (portrait 9:16 → 720x1280), keeps file under 50MB
+    const scaleFilter = 'scale=720:-2'
+    const subFilter = `${scaleFilter},subtitles=${srtPath}:force_style='FontSize=18,PrimaryColour=&HFFFFFF&,OutlineColour=&H00000000,Outline=2,BorderStyle=1,Alignment=2,MarginV=40'`
 
     const encodeArgs = ['-loglevel', 'error', '-i', join(jobDir, 'merged.mp4')]
     if (audioExt) encodeArgs.push('-i', join(jobDir, `audio.${audioExt}`), '-map', '0:v:0', '-map', '1:a:0')
@@ -137,7 +139,7 @@ export default async function handler(req, res) {
       // Fallback: encode without subtitle filter (libass may be unavailable)
       const noSubArgs = ['-loglevel', 'error', '-i', join(jobDir, 'merged.mp4')]
       if (audioExt) noSubArgs.push('-i', join(jobDir, `audio.${audioExt}`), '-map', '0:v:0', '-map', '1:a:0')
-      noSubArgs.push('-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '28')
+      noSubArgs.push('-vf', scaleFilter, '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '28')
       if (audioExt) noSubArgs.push('-c:a', 'aac', '-b:a', '128k', '-shortest')
       noSubArgs.push('-y', outputPath)
       await run(ffmpeg, noSubArgs)
