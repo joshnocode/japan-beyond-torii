@@ -605,6 +605,7 @@ function ProgressBanner({ step, detail, pct, done, total, eta }) {
 
 // ── Scene card ─────────────────────────────────────────────────
 function SceneCard({ scene, isActive, activeAction, phase, idlePhase, onRetry }) {
+  const [expanded, setExpanded] = useState(false)
   const hasVideo = !!scene.video_url
   const hasImage = !!scene.image_url
   const isError  = scene.status === 'error'
@@ -612,51 +613,105 @@ function SceneCard({ scene, isActive, activeAction, phase, idlePhase, onRetry })
   const isVidActive = isActive && phase === 'videos'
 
   return (
-    <div className={`gen-scene-card ${isActive ? 'active' : ''} ${hasVideo ? 'has-video' : hasImage ? 'done' : ''} ${isError ? 'has-error' : ''}`}>
-      <div className="gen-scene-thumb">
-        {hasVideo ? (
-          <video src={scene.video_url} loop muted playsInline autoPlay className="scene-video" />
-        ) : hasImage ? (
-          <>
-            <img src={scene.image_url} alt={`Scene ${scene.scene_index + 1}`} />
-            {isVidActive && (
-              <div className="gen-scene-video-overlay">
-                <div className="spinner" />
-                <p>{activeAction}</p>
+    <>
+      <div
+        className={`gen-scene-card ${isActive ? 'active' : ''} ${hasVideo ? 'has-video' : hasImage ? 'done' : ''} ${isError ? 'has-error' : ''}`}
+        onClick={() => setExpanded(true)}
+        style={{ cursor: 'pointer' }}
+      >
+        <div className="gen-scene-thumb">
+          {hasVideo ? (
+            <video src={scene.video_url} loop muted playsInline autoPlay className="scene-video" />
+          ) : hasImage ? (
+            <>
+              <img src={scene.image_url} alt={`Scene ${scene.scene_index + 1}`} />
+              {isVidActive && (
+                <div className="gen-scene-video-overlay">
+                  <div className="spinner" />
+                  <p>{activeAction}</p>
+                </div>
+              )}
+            </>
+          ) : isImgActive ? (
+            <div className="gen-scene-loading">
+              <div className="spinner" />
+              <p>{activeAction}</p>
+            </div>
+          ) : (
+            <div className="gen-scene-placeholder">
+              <span>{scene.scene_index + 1}</span>
+            </div>
+          )}
+
+          {hasVideo && !isError && <div className="gen-scene-done-badge video">▶</div>}
+          {!hasVideo && hasImage && !isError && <div className="gen-scene-done-badge">✓</div>}
+
+          {isError && (
+            <div className="gen-scene-error-overlay">
+              <span className="error-x">✕</span>
+              <p>Failed</p>
+              {idlePhase && (
+                <button className="scene-retry-btn" onClick={e => { e.stopPropagation(); onRetry(scene) }}>↺ Retry</button>
+              )}
+            </div>
+          )}
+        </div>
+        <div className="gen-scene-info">
+          <p className="gen-scene-label">
+            Scene {scene.scene_index + 1}
+            {isError && <span className="scene-error-tag">Error</span>}
+          </p>
+          <p className="gen-scene-desc">{scene.description}</p>
+        </div>
+      </div>
+
+      {expanded && (
+        <div className="scene-detail-overlay" onClick={() => setExpanded(false)}>
+          <div className="scene-detail-modal" onClick={e => e.stopPropagation()}>
+            <div className="scene-detail-header">
+              <h3>Scene {scene.scene_index + 1}</h3>
+              <button className="scene-detail-close" onClick={() => setExpanded(false)}>✕</button>
+            </div>
+
+            {hasVideo ? (
+              <video src={scene.video_url} controls playsInline className="scene-detail-media" />
+            ) : hasImage ? (
+              <img src={scene.image_url} alt={`Scene ${scene.scene_index + 1}`} className="scene-detail-media" />
+            ) : null}
+
+            <div className="scene-detail-body">
+              {scene.description && (
+                <div className="scene-detail-row">
+                  <span className="scene-detail-label">Description</span>
+                  <p className="scene-detail-value">{scene.description}</p>
+                </div>
+              )}
+              {scene.image_prompt && (
+                <div className="scene-detail-row">
+                  <span className="scene-detail-label">Image Prompt</span>
+                  <p className="scene-detail-value">{scene.image_prompt}</p>
+                </div>
+              )}
+              {scene.motion_prompt && (
+                <div className="scene-detail-row">
+                  <span className="scene-detail-label">Motion Prompt</span>
+                  <p className="scene-detail-value">{scene.motion_prompt}</p>
+                </div>
+              )}
+              <div className="scene-detail-row">
+                <span className="scene-detail-label">Status</span>
+                <p className="scene-detail-value" style={{ textTransform: 'capitalize' }}>{scene.status || 'pending'}</p>
               </div>
-            )}
-          </>
-        ) : isImgActive ? (
-          <div className="gen-scene-loading">
-            <div className="spinner" />
-            <p>{activeAction}</p>
-          </div>
-        ) : (
-          <div className="gen-scene-placeholder">
-            <span>{scene.scene_index + 1}</span>
-          </div>
-        )}
+            </div>
 
-        {hasVideo && !isError && <div className="gen-scene-done-badge video">▶</div>}
-        {!hasVideo && hasImage && !isError && <div className="gen-scene-done-badge">✓</div>}
-
-        {isError && (
-          <div className="gen-scene-error-overlay">
-            <span className="error-x">✕</span>
-            <p>Failed</p>
-            {idlePhase && (
-              <button className="scene-retry-btn" onClick={() => onRetry(scene)}>↺ Retry</button>
+            {isError && idlePhase && (
+              <button className="btn-primary" style={{ width: '100%', marginTop: '1rem' }} onClick={() => { onRetry(scene); setExpanded(false) }}>
+                ↺ Retry Image Generation
+              </button>
             )}
           </div>
-        )}
-      </div>
-      <div className="gen-scene-info">
-        <p className="gen-scene-label">
-          Scene {scene.scene_index + 1}
-          {isError && <span className="scene-error-tag">Error</span>}
-        </p>
-        <p className="gen-scene-desc">{scene.description}</p>
-      </div>
-    </div>
+        </div>
+      )}
+    </>
   )
 }
