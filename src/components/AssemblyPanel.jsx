@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { assembleVideo } from '../lib/assemble'
+import { supabase } from '../lib/supabase'
 
 const STAGES = {
   loading_ffmpeg: { label: 'Loading FFmpeg', detail: 'Downloading ~30 MB video engine (cached after first use)…' },
@@ -12,7 +13,7 @@ const STAGES = {
   error: { label: 'Failed', detail: '' },
 }
 
-export default function AssemblyPanel({ project, scenes, onComplete }) {
+export default function AssemblyPanel({ project, scenes, onComplete, onAssemblyStart }) {
   const [stage, setStage] = useState(null)
   const [progress, setProgress] = useState(0)
   const [error, setError] = useState('')
@@ -25,6 +26,9 @@ export default function AssemblyPanel({ project, scenes, onComplete }) {
     setError('')
     setStage('loading_ffmpeg')
     setProgress(0)
+    // Mark assembling in DB so a refresh shows the interrupted state
+    await supabase.from('projects').update({ status: 'assembling' }).eq('id', project.id)
+    onAssemblyStart?.()
     try {
       const url = await assembleVideo({
         project,

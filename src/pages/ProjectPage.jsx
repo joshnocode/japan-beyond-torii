@@ -552,6 +552,16 @@ export default function ProjectPage() {
           </div>
         )}
 
+        {/* ── Assembly interrupted ── */}
+        {effectiveStatus === 'assembling' && phase === 'idle' && !project.video_url && (
+          <div className="ready-banner">
+            <div>
+              <p className="ready-label">Assembly was interrupted</p>
+              <p className="ready-sub">The page was refreshed mid-assembly. Click below to restart — it will re-download and re-encode from your saved clips.</p>
+            </div>
+          </div>
+        )}
+
         {/* ── Audio upload ── */}
         {['videos_ready', 'assembling'].includes(effectiveStatus) && !project.audio_url && phase === 'idle' && (
           <AudioUploader project={project} onUploaded={url => patchProject({ audio_url: url })} />
@@ -570,6 +580,7 @@ export default function ProjectPage() {
             <AssemblyPanel
               project={project}
               scenes={scenes}
+              onAssemblyStart={() => patchProject({ status: 'assembling' })}
               onComplete={url => setProject(p => ({ ...p, status: 'complete', video_url: url }))}
             />
           )
