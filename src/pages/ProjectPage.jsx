@@ -58,6 +58,18 @@ export default function ProjectPage() {
     if (!loading && autostart && project?.status === 'draft') startImageGeneration()
   }, [loading])
 
+  // Warn before leaving while generation is running
+  useEffect(() => {
+    const handler = (e) => {
+      if (phase !== 'idle') {
+        e.preventDefault()
+        e.returnValue = ''
+      }
+    }
+    window.addEventListener('beforeunload', handler)
+    return () => window.removeEventListener('beforeunload', handler)
+  }, [phase])
+
   const loadProject = async () => {
     try {
       const [{ data: proj, error: projErr }, { data: sc }] = await Promise.all([
