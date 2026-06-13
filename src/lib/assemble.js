@@ -57,6 +57,8 @@ export async function assembleVideo({ project, scenes, onStage, onProgress }) {
 
   // ── 2. Download scene video clips ─────────────────────────
   report('downloading_clips', 0)
+  const missing = scenes.filter(s => !s.video_url)
+  if (missing.length) throw new Error(`${missing.length} scene${missing.length > 1 ? 's' : ''} have no video. Retry them before assembling.`)
   for (let i = 0; i < scenes.length; i++) {
     const scene = scenes[i]
     onProgress?.(Math.round((i / scenes.length) * 80))

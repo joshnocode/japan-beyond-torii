@@ -174,10 +174,10 @@ export default function ProjectPage() {
     }
 
     const { data: allScenes } = await supabase
-      .from('scenes').select('video_url, status').eq('project_id', id)
-    const allDone  = allScenes?.every(s => s.video_url || s.status === 'error')
-    const anyVideo = allScenes?.some(s => s.video_url)
-    const newStatus = anyVideo && allDone ? 'videos_ready' : 'generating_videos'
+      .from('scenes').select('video_url, image_url').eq('project_id', id)
+    // Only advance when every scene that has an image also has a video
+    const allHaveVideo = allScenes?.every(s => !s.image_url || s.video_url)
+    const newStatus = allHaveVideo ? 'videos_ready' : 'generating_videos'
 
     await supabase.from('projects').update({ status: newStatus }).eq('id', id)
     setProject(p => ({ ...p, status: newStatus }))
@@ -443,7 +443,6 @@ export default function ProjectPage() {
     const s = project.status
     if (s === 'complete' || s === 'assembling' || s === 'generating_videos') return s
     if (total > 0 && vidDone === total) return 'videos_ready'
-    if (total > 0 && vidDone > 0) return 'videos_ready'
     if (total > 0 && imgDone === total) return 'images_ready'
     return s
   }
@@ -560,11 +559,20 @@ export default function ProjectPage() {
 
         {/* ── Assembly ── */}
         {['videos_ready', 'assembling', 'complete'].includes(effectiveStatus) && phase === 'idle' && (
-          <AssemblyPanel
-            project={project}
-            scenes={scenes}
-            onComplete={url => setProject(p => ({ ...p, status: 'complete', video_url: url }))}
-          />
+          vidDone < total ? (
+            <div className="ready-banner" style={{ borderColor: 'var(--accent-error, #e55)' }}>
+              <div>
+                <p className="ready-label">⚠️ {total - vidDone} scene{total - vidDone !== 1 ? 's' : ''} still missing video</p>
+                <p className="ready-sub">Retry failed scenes before assembling to avoid static images in your video.</p>
+              </div>
+            </div>
+          ) : (
+            <AssemblyPanel
+              project={project}
+              scenes={scenes}
+              onComplete={url => setProject(p => ({ ...p, status: 'complete', video_url: url }))}
+            />
+          )
         )}
 
         {/* ── Scenes grid ── */}
