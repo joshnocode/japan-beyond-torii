@@ -1,16 +1,29 @@
 import { createClient } from '@supabase/supabase-js'
 import { execFile } from 'node:child_process'
 import { join } from 'node:path'
-import { writeFile, readFile, mkdir, rm, chmod } from 'node:fs/promises'
+import { writeFile, readFile, mkdir, rm, chmod, copyFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import ffmpegPath from 'ffmpeg-static'
+import ffmpegStaticPath from 'ffmpeg-static'
 
 export const maxDuration = 300
 
-function run(args) {
+// Copy ffmpeg binary to /tmp so we can chmod it — Lambda's /var/task is read-only
+async function getFFmpeg() {
+  const dest = join(tmpdir(), 'ffmpeg_bin')
+  try {
+    await copyFile(ffmpegStaticPath, dest)
+    await chmod(dest, 0o755)
+    return dest
+  } catch {
+    // If copy fails fall back to original path (may already be executable)
+    return ffmpegStaticPath
+  }
+}
+
+function run(ffmpeg, args) {
   return new Promise((resolve, reject) => {
-    execFile(ffmpegPath, args, { maxBuffer: 50 * 1024 * 1024 }, (err, _out, stderr) => {
-      if (err) reject(new Error(stderr?.slice(-2000) || err.message))
+    execFile(ffmpeg, args, { maxBuffer: 100 * 1024 * 1024 }, (err, _out, stderr) => {
+      if (err) reject(new Error(stderr?.slice(-3000) || err.message))
       else resolve()
     })
   })
@@ -67,22 +80,20 @@ export default async function handler(req, res) {
   await mkdir(jobDir, { recursive: true })
 
   try {
-    await chmod(ffmpegPath, 0o755).catch(() => {})
+    const ffmpeg = await getFFmpeg()
 
-    // Download all video clips in parallel
+    // Download all clips in parallel
     await Promise.all(scenes.map(async (scene, i) => {
       const resp = await fetch(scene.video_url)
       if (!resp.ok) throw new Error(`Scene ${scene.scene_index + 1} download failed (HTTP ${resp.status})`)
       await writeFile(join(jobDir, `scene_${i}.mp4`), Buffer.from(await resp.arrayBuffer()))
     }))
 
-    // Concat list
+    // Concat list + SRT
     await writeFile(
       join(jobDir, 'concat.txt'),
       scenes.map((_, i) => `file '${join(jobDir, `scene_${i}.mp4`)}'`).join('\n')
     )
-
-    // SRT captions
     await writeFile(join(jobDir, 'subs.srt'), buildSRT(scenes, project.brief))
 
     // Audio
@@ -95,8 +106,8 @@ export default async function handler(req, res) {
       }
     }
 
-    // Step 1: stream-copy concat (fast, no re-encode)
-    await run([
+    // Step 1: stream-copy concat
+    await run(ffmpeg, [
       '-loglevel', 'error',
       '-f', 'concat', '-safe', '0',
       '-i', join(jobDir, 'concat.txt'),
@@ -104,30 +115,30 @@ export default async function handler(req, res) {
       join(jobDir, 'merged.mp4'),
     ])
 
-    // Step 2: encode with captions + audio
-    const outputPath = join(jobDir, 'output.mp4')
+    // Step 2: encode — ultrafast preset to stay within timeout
     const srtPath = join(jobDir, 'subs.srt')
+    const outputPath = join(jobDir, 'output.mp4')
     const subFilter = `subtitles=${srtPath}:force_style='FontSize=22,PrimaryColour=&HFFFFFF&,OutlineColour=&H00000000,Outline=2,BorderStyle=1,Alignment=2,MarginV=50'`
 
     const encodeArgs = ['-loglevel', 'error', '-i', join(jobDir, 'merged.mp4')]
     if (audioExt) encodeArgs.push('-i', join(jobDir, `audio.${audioExt}`), '-map', '0:v:0', '-map', '1:a:0')
-    encodeArgs.push('-vf', subFilter, '-c:v', 'libx264', '-preset', 'fast', '-crf', '22')
+    encodeArgs.push('-vf', subFilter, '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '23')
     if (audioExt) encodeArgs.push('-c:a', 'aac', '-b:a', '192k', '-shortest')
     encodeArgs.push('-y', outputPath)
 
     try {
-      await run(encodeArgs)
-    } catch {
-      // Retry without subtitle filter if libass unavailable
+      await run(ffmpeg, encodeArgs)
+    } catch (subErr) {
+      // Fallback: encode without subtitle filter (libass may be unavailable)
       const noSubArgs = ['-loglevel', 'error', '-i', join(jobDir, 'merged.mp4')]
       if (audioExt) noSubArgs.push('-i', join(jobDir, `audio.${audioExt}`), '-map', '0:v:0', '-map', '1:a:0')
-      noSubArgs.push('-c:v', 'libx264', '-preset', 'fast', '-crf', '22')
+      noSubArgs.push('-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '23')
       if (audioExt) noSubArgs.push('-c:a', 'aac', '-b:a', '192k', '-shortest')
       noSubArgs.push('-y', outputPath)
-      await run(noSubArgs)
+      await run(ffmpeg, noSubArgs)
     }
 
-    // Upload to Supabase storage
+    // Upload to Supabase
     const outputBuf = await readFile(outputPath)
     const storagePath = `${project.user_id}/${project_id}/final.mp4`
     const { error: uploadErr } = await supabase.storage
@@ -141,6 +152,9 @@ export default async function handler(req, res) {
     await supabase.from('projects').update({ video_url: videoUrl, status: 'complete' }).eq('id', project_id)
 
     return res.status(200).json({ video_url: videoUrl })
+  } catch (err) {
+    console.error('[assemble-video] error:', err.message)
+    return res.status(500).json({ error: err.message || 'Assembly failed' })
   } finally {
     await rm(jobDir, { recursive: true, force: true }).catch(() => {})
   }

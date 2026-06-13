@@ -4,7 +4,8 @@
   ],
   "functions": {
     "api/assemble-video.js": {
-      "maxDuration": 300
+      "maxDuration": 300,
+      "includeFiles": "node_modules/ffmpeg-static/**"
     }
   }
 }
