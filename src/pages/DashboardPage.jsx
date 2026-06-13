@@ -90,9 +90,6 @@ export default function DashboardPage() {
             )}
           </div>
           <div style={{ display: 'flex', gap: 10 }}>
-            <button className="btn-ghost" onClick={() => navigate('/import')}>
-              Import JSON
-            </button>
             <button className="btn-primary" onClick={() => navigate('/new')}>
               + New Video
             </button>

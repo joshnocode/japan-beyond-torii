@@ -5,7 +5,6 @@ import LoginPage from './pages/LoginPage'
 import DashboardPage from './pages/DashboardPage'
 import NewProjectPage from './pages/NewProjectPage'
 import ProjectPage from './pages/ProjectPage'
-import ImportPage from './pages/ImportPage'
 import './index.css'
 
 function App() {
@@ -38,15 +37,7 @@ function App() {
               </ProtectedRoute>
             }
           />
-          <Route
-            path="/import"
-            element={
-              <ProtectedRoute>
-                <ImportPage />
-              </ProtectedRoute>
-            }
-          />
-          <Route path="/" element={<Navigate to="/dashboard" replace />} />
+<Route path="/" element={<Navigate to="/dashboard" replace />} />
           <Route path="*" element={<Navigate to="/dashboard" replace />} />
         </Routes>
       </ErrorBoundary>
