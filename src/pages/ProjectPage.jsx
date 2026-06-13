@@ -444,6 +444,17 @@ export default function ProjectPage() {
           </div>
         )}
 
+        {/* ── Resume interrupted image generation ── */}
+        {effectiveStatus === 'processing' && phase === 'idle' && scenes.some(s => !s.image_url && s.status !== 'error') && (
+          <div className="ready-banner">
+            <div>
+              <p className="ready-label">Image generation interrupted</p>
+              <p className="ready-sub">{scenes.filter(s => !s.image_url).length} scene{scenes.filter(s => !s.image_url).length !== 1 ? 's' : ''} still need images.</p>
+            </div>
+            <button className="btn-primary" onClick={startImageGeneration}>Resume →</button>
+          </div>
+        )}
+
         {/* ── Images ready ── */}
         {effectiveStatus === 'images_ready' && phase === 'idle' && (
           <div className="ready-banner">
