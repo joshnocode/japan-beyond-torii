@@ -58,14 +58,19 @@ export default function ProjectPage() {
   }, [loading])
 
   const loadProject = async () => {
-    const [{ data: proj }, { data: sc }] = await Promise.all([
-      supabase.from('projects').select('*').eq('id', id).single(),
-      supabase.from('scenes').select('*').eq('project_id', id).order('scene_index'),
-    ])
-    if (!proj) { setError('Project not found.'); setLoading(false); return }
-    setProject(proj)
-    setScenes(sc || [])
-    setLoading(false)
+    try {
+      const [{ data: proj, error: projErr }, { data: sc }] = await Promise.all([
+        supabase.from('projects').select('*').eq('id', id).single(),
+        supabase.from('scenes').select('*').eq('project_id', id).order('scene_index'),
+      ])
+      if (projErr || !proj) { setError('Project not found.'); setLoading(false); return }
+      setProject(proj)
+      setScenes(sc || [])
+    } catch (err) {
+      setError('Failed to load project. Please refresh.')
+    } finally {
+      setLoading(false)
+    }
   }
 
   const patchScene   = (sceneId, patch) => setScenes(prev => prev.map(s => s.id === sceneId ? { ...s, ...patch } : s))
