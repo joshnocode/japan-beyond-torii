@@ -1,9 +1,9 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { supabase } from '../lib/supabase'
 
 const API_BASE = import.meta.env.DEV ? 'http://localhost:3000' : ''
 
-export default function AssemblyPanel({ project, scenes, onComplete, onAssemblyStart }) {
+export default function AssemblyPanel({ project, scenes, onComplete, onAssemblyStart, autoStart }) {
   const [running, setRunning] = useState(false)
   const [error, setError] = useState('')
   const [videoUrl, setVideoUrl] = useState(project.video_url || null)
@@ -11,6 +11,7 @@ export default function AssemblyPanel({ project, scenes, onComplete, onAssemblyS
   const hasAudio = !!project.audio_url
 
   const startAssembly = async () => {
+    if (running) return
     setError('')
     setRunning(true)
 
@@ -43,6 +44,11 @@ export default function AssemblyPanel({ project, scenes, onComplete, onAssemblyS
       setRunning(false)
     }
   }
+
+  // Auto-resume when page is reloaded mid-assembly (DB status = assembling)
+  useEffect(() => {
+    if (autoStart && !videoUrl) startAssembly()
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   if (videoUrl) {
     return (

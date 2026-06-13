@@ -179,8 +179,13 @@ export default function ProjectPage() {
     const allHaveVideo = allScenes?.every(s => !s.image_url || s.video_url)
     const newStatus = allHaveVideo ? 'videos_ready' : 'generating_videos'
 
-    await supabase.from('projects').update({ status: newStatus }).eq('id', id)
-    setProject(p => ({ ...p, status: newStatus }))
+    // Guard: don't overwrite assembling/complete if the user started assembly
+    // while this poll loop was still running (race condition)
+    await supabase.from('projects')
+      .update({ status: newStatus })
+      .eq('id', id)
+      .eq('status', 'generating_videos')
+    setProject(p => (p.status === 'generating_videos' ? { ...p, status: newStatus } : p))
 
     activeRef.current = false
     setPhase('idle')
@@ -580,6 +585,7 @@ export default function ProjectPage() {
             <AssemblyPanel
               project={project}
               scenes={scenes}
+              autoStart={project.status === 'assembling' && !project.video_url}
               onAssemblyStart={() => patchProject({ status: 'assembling' })}
               onComplete={url => setProject(p => ({ ...p, status: 'complete', video_url: url }))}
             />
