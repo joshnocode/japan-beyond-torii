@@ -1,51 +1,50 @@
 import { useState } from 'react'
-import { assembleVideo } from '../lib/assemble'
 import { supabase } from '../lib/supabase'
 
-const STAGES = {
-  loading_ffmpeg: { label: 'Loading FFmpeg', detail: 'Downloading ~30 MB video engine (cached after first use)…' },
-  downloading_clips: { label: 'Downloading Clips', detail: 'Fetching scene videos from Fal.ai…' },
-  downloading_audio: { label: 'Downloading Audio', detail: 'Fetching ElevenLabs audio from Supabase…' },
-  concatenating: { label: 'Concatenating', detail: 'Joining scene clips in order…' },
-  encoding: { label: 'Encoding', detail: 'Burning captions, mixing audio, exporting MP4…' },
-  uploading: { label: 'Uploading', detail: 'Saving final video to Supabase storage…' },
-  done: { label: 'Complete', detail: 'Your video is ready.' },
-  error: { label: 'Failed', detail: '' },
-}
+const API_BASE = import.meta.env.DEV ? 'http://localhost:3000' : ''
 
 export default function AssemblyPanel({ project, scenes, onComplete, onAssemblyStart }) {
-  const [stage, setStage] = useState(null)
-  const [progress, setProgress] = useState(0)
+  const [running, setRunning] = useState(false)
   const [error, setError] = useState('')
   const [videoUrl, setVideoUrl] = useState(project.video_url || null)
 
   const hasAudio = !!project.audio_url
-  const isRunning = stage && stage !== 'done' && stage !== 'error'
 
   const startAssembly = async () => {
     setError('')
-    setStage('loading_ffmpeg')
-    setProgress(0)
-    // Mark assembling in DB so a refresh shows the interrupted state
+    setRunning(true)
+
+    // Persist status immediately so a refresh shows the interrupted banner
     await supabase.from('projects').update({ status: 'assembling' }).eq('id', project.id)
     onAssemblyStart?.()
+
     try {
-      const url = await assembleVideo({
-        project,
-        scenes,
-        onStage: setStage,
-        onProgress: setProgress,
+      const { data: { session } } = await supabase.auth.getSession()
+      const res = await fetch(`${API_BASE}/api/assemble-video`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${session.access_token}`,
+        },
+        body: JSON.stringify({ project_id: project.id }),
       })
-      setVideoUrl(url)
-      onComplete?.(url)
+
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}))
+        throw new Error(body.error || `Server error ${res.status}`)
+      }
+
+      const { video_url } = await res.json()
+      setVideoUrl(video_url)
+      onComplete?.(video_url)
     } catch (err) {
       setError(err.message || 'Assembly failed')
-      setStage('error')
+    } finally {
+      setRunning(false)
     }
   }
 
-  // Already complete
-  if (videoUrl && stage !== 'error') {
+  if (videoUrl) {
     return (
       <div className="assembly-done-panel">
         <div className="assembly-done-header">
@@ -55,12 +54,7 @@ export default function AssemblyPanel({ project, scenes, onComplete, onAssemblyS
             <p className="assembly-done-sub">9:16 MP4 · audio + captions</p>
           </div>
         </div>
-        <video
-          src={videoUrl}
-          controls
-          playsInline
-          className="final-video-preview"
-        />
+        <video src={videoUrl} controls playsInline className="final-video-preview" />
         <a
           href={videoUrl}
           download="japan-beyond-torii.mp4"
@@ -84,7 +78,7 @@ export default function AssemblyPanel({ project, scenes, onComplete, onAssemblyS
             {hasAudio ? '🎙️ Audio ready' : '⚠️ No audio uploaded'}
           </p>
         </div>
-        {!isRunning && !videoUrl && (
+        {!running && (
           <button
             className="btn-primary"
             onClick={startAssembly}
@@ -96,47 +90,18 @@ export default function AssemblyPanel({ project, scenes, onComplete, onAssemblyS
         )}
       </div>
 
-      {!hasAudio && !isRunning && (
+      {!hasAudio && !running && (
         <p className="assembly-warning">
-          ⚠️ No audio file found for this project. Go back to the script page to upload your ElevenLabs audio before assembling.
+          ⚠️ No audio file found. Upload your ElevenLabs audio before assembling.
         </p>
       )}
 
-      {isRunning && (
-        <div className="assembly-progress">
-          <div className="assembly-stages">
-            {Object.entries(STAGES).slice(0, -2).map(([key, info]) => {
-              const stageKeys = Object.keys(STAGES).slice(0, -2)
-              const currentIdx = stageKeys.indexOf(stage)
-              const thisIdx = stageKeys.indexOf(key)
-              const isDone = thisIdx < currentIdx
-              const isActive = key === stage
-              return (
-                <div
-                  key={key}
-                  className={`assembly-stage-step ${isActive ? 'active' : ''} ${isDone ? 'done' : ''}`}
-                >
-                  <span className="step-dot">{isDone ? '✓' : isActive ? '◉' : '○'}</span>
-                  <span className="step-label">{info.label}</span>
-                </div>
-              )
-            })}
-          </div>
-
-          <div className="assembly-active-detail">
-            <p className="assembly-active-label">{STAGES[stage]?.label}</p>
-            <p className="assembly-active-sub">{STAGES[stage]?.detail}</p>
-            {(stage === 'encoding' || stage === 'downloading_clips') && progress > 0 && (
-              <div className="assembly-bar-wrap">
-                <div className="assembly-bar" style={{ width: `${progress}%` }} />
-                <span className="assembly-pct">{progress}%</span>
-              </div>
-            )}
-            {(stage === 'loading_ffmpeg' || stage === 'concatenating' || stage === 'uploading' || stage === 'downloading_audio') && (
-              <div className="assembly-spinner-row">
-                <div className="spinner" />
-              </div>
-            )}
+      {running && (
+        <div className="assembly-cloud-progress">
+          <div className="spinner" />
+          <div>
+            <p className="gen-step">Assembling in Cloud</p>
+            <p className="gen-detail">Downloading clips · encoding · uploading — this takes 1–3 minutes</p>
           </div>
         </div>
       )}

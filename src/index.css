@@ -1400,6 +1400,16 @@ h1, h2, h3, h4 {
   margin-top: 4px;
 }
 
+.assembly-cloud-progress {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 1rem;
+  background: rgba(255,255,255,0.04);
+  border-radius: 8px;
+  margin-top: 0.75rem;
+}
+
 .assembly-warning {
   font-size: 0.85rem;
   color: #e67e22;
