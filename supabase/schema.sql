@@ -24,6 +24,7 @@ create table if not exists public.scenes (
   motion_prompt text,
   image_url text,
   video_url text,
+  video_request_id text,
   status text default 'pending' check (status in ('pending','generating_image','generating_video','complete','error')),
   created_at timestamptz default now()
 );

@@ -6,8 +6,7 @@ import AudioUploader from '../components/AudioUploader'
 
 const API_BASE = import.meta.env.DEV ? 'http://localhost:3000' : ''
 const POLL_INTERVAL_MS = 5000
-const VIDEO_TIMEOUT_MS = 3 * 60 * 1000  // 3 minutes before retry
-const MAX_VIDEO_RETRIES = 2
+const MAX_IMAGE_RETRIES = 4
 
 const STATUS_LABELS = {
   draft: 'Draft',
@@ -33,7 +32,7 @@ export default function ProjectPage() {
   const [phase, setPhase]       = useState('idle')      // idle | images | videos
   const [currentIdx, setCurrentIdx] = useState(null)
   const [currentAction, setCurrentAction] = useState('')
-  const [avgSceneMs, setAvgSceneMs] = useState(null)    // for ETA
+  const [avgSceneMs, setAvgSceneMs] = useState(null)
   const [elapsedSeconds, setElapsedSeconds] = useState(0)
 
   const activeRef     = useRef(false)
@@ -43,75 +42,151 @@ export default function ProjectPage() {
   // ── Elapsed timer ─────────────────────────────────────────────
   useEffect(() => {
     if (phase === 'idle') { setElapsedSeconds(0); return }
-    const id = setInterval(() => {
+    const tid = setInterval(() => {
       if (sceneStartRef.current) {
         setElapsedSeconds(Math.floor((Date.now() - sceneStartRef.current) / 1000))
       }
     }, 1000)
-    return () => clearInterval(id)
+    return () => clearInterval(tid)
   }, [phase])
 
   useEffect(() => { loadProject() }, [id])
 
+  // Auto-start (new project) or auto-resume (video polling after refresh)
   useEffect(() => {
-    if (!loading && autostart && project?.status === 'draft') startImageGeneration()
+    if (loading) return
+    if (autostart && project?.status === 'draft') { startImageGeneration(); return }
+    // Auto-resume cloud video polling when jobs already submitted
+    if (!activeRef.current && project?.status === 'generating_videos') {
+      if (scenes.some(s => s.video_request_id && !s.video_url)) {
+        activeRef.current = true
+        pollPendingVideos()
+      } else if (scenes.some(s => s.image_url && !s.video_url && !s.video_request_id)) {
+        startVideoGeneration()
+      }
+    }
   }, [loading])
 
+  // Warn before leaving while image generation is running (client-side loop)
+  useEffect(() => {
+    const handler = (e) => {
+      if (phase !== 'idle') {
+        e.preventDefault()
+        e.returnValue = ''
+      }
+    }
+    window.addEventListener('beforeunload', handler)
+    return () => window.removeEventListener('beforeunload', handler)
+  }, [phase])
+
   const loadProject = async () => {
-    const [{ data: proj }, { data: sc }] = await Promise.all([
-      supabase.from('projects').select('*').eq('id', id).single(),
-      supabase.from('scenes').select('*').eq('project_id', id).order('scene_index'),
-    ])
-    if (!proj) { setError('Project not found.'); setLoading(false); return }
-    setProject(proj)
-    setScenes(sc || [])
-    setLoading(false)
+    try {
+      const [{ data: proj, error: projErr }, { data: sc }] = await Promise.all([
+        supabase.from('projects').select('*').eq('id', id).single(),
+        supabase.from('scenes').select('*').eq('project_id', id).order('scene_index'),
+      ])
+      if (projErr || !proj) { setError('Project not found.'); setLoading(false); return }
+      setProject(proj)
+      setScenes(sc || [])
+    } catch (err) {
+      setError('Failed to load project. Please refresh.')
+    } finally {
+      setLoading(false)
+    }
   }
 
   const patchScene   = (sceneId, patch) => setScenes(prev => prev.map(s => s.id === sceneId ? { ...s, ...patch } : s))
   const patchProject = (patch) => setProject(p => ({ ...p, ...patch }))
 
-  // ── Video polling with 3-min timeout + retry ─────────────────
-  const pollVideoWithRetry = useCallback(async (scene) => {
+  // ── Image generation with auto-retry ─────────────────────────
+  const generateImageWithRetry = useCallback(async (scene) => {
     let lastErr
-    for (let attempt = 0; attempt <= MAX_VIDEO_RETRIES; attempt++) {
+    for (let attempt = 0; attempt <= MAX_IMAGE_RETRIES; attempt++) {
       if (attempt > 0) {
-        setCurrentAction(`Retry ${attempt}/${MAX_VIDEO_RETRIES}…`)
-        await new Promise(r => setTimeout(r, 3000))
+        setCurrentAction(`Retry ${attempt}/${MAX_IMAGE_RETRIES}…`)
+        await new Promise(r => setTimeout(r, 2000))
       }
       try {
-        setCurrentAction(attempt === 0 ? 'Submitting…' : `Retrying (${attempt}/${MAX_VIDEO_RETRIES})…`)
-
-        const submitRes = await fetch(`${API_BASE}/api/submit-video`, {
+        setCurrentAction(attempt === 0 ? 'Generating image…' : `Retrying (${attempt}/${MAX_IMAGE_RETRIES})…`)
+        const res = await fetch(`${API_BASE}/api/generate-image`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ image_url: scene.image_url, motion_prompt: scene.motion_prompt }),
+          body: JSON.stringify({ image_prompt: scene.image_prompt }),
         })
-        if (!submitRes.ok) throw new Error((await submitRes.json()).error || `HTTP ${submitRes.status}`)
-        const { request_id } = await submitRes.json()
-        setCurrentAction('In queue…')
-
-        const deadline = Date.now() + VIDEO_TIMEOUT_MS
-        while (activeRef.current) {
-          await new Promise(r => setTimeout(r, POLL_INTERVAL_MS))
-          if (Date.now() > deadline) throw new Error('Timed out after 3 minutes')
-
-          const pollRes = await fetch(`${API_BASE}/api/poll-video?request_id=${encodeURIComponent(request_id)}`)
-          if (!pollRes.ok) throw new Error(`Poll HTTP ${pollRes.status}`)
-          const data = await pollRes.json()
-
-          if (data.status === 'in_progress') setCurrentAction('Animating…')
-          if (data.status === 'done') return data.video_url
-          if (data.status === 'error') throw new Error(data.error || 'Video generation failed')
-        }
-        return null  // user navigated away
+        if (!res.ok) throw new Error((await res.json()).error || `HTTP ${res.status}`)
+        const { image_url } = await res.json()
+        return image_url
       } catch (err) {
         lastErr = err
-        if (!activeRef.current) return null
       }
     }
     throw lastErr
   }, [])
+
+  // ── Cloud video polling — polls all queued request_ids until done ──
+  const pollPendingVideos = useCallback(async () => {
+    setPhase('videos')
+
+    while (activeRef.current) {
+      const { data: pending } = await supabase
+        .from('scenes')
+        .select('id, scene_index, video_request_id')
+        .eq('project_id', id)
+        .not('video_request_id', 'is', null)
+        .is('video_url', null)
+
+      if (!pending?.length) break
+
+      setCurrentAction(`Polling ${pending.length} scene${pending.length !== 1 ? 's' : ''}…`)
+
+      // Poll all in parallel — cloud jobs run concurrently, so we check them all each cycle
+      await Promise.all(
+        pending.map(async (scene) => {
+          try {
+            const pollRes = await fetch(
+              `${API_BASE}/api/poll-video?request_id=${encodeURIComponent(scene.video_request_id)}`
+            )
+            if (!pollRes.ok) return
+            const data = await pollRes.json()
+
+            if (data.status === 'done' && data.video_url) {
+              await supabase.from('scenes')
+                .update({ video_url: data.video_url, status: 'complete', video_request_id: null })
+                .eq('id', scene.id)
+              setScenes(prev => prev.map(s =>
+                s.id === scene.id ? { ...s, video_url: data.video_url, status: 'complete', video_request_id: null } : s
+              ))
+            } else if (data.status === 'error') {
+              await supabase.from('scenes')
+                .update({ status: 'error', video_request_id: null })
+                .eq('id', scene.id)
+              setScenes(prev => prev.map(s =>
+                s.id === scene.id ? { ...s, status: 'error', video_request_id: null } : s
+              ))
+            }
+            // 'queued' / 'in_progress' → do nothing, retry next cycle
+          } catch (_) {}
+        })
+      )
+
+      if (!activeRef.current) break
+      await new Promise(r => setTimeout(r, POLL_INTERVAL_MS))
+    }
+
+    const { data: allScenes } = await supabase
+      .from('scenes').select('video_url, status').eq('project_id', id)
+    const allDone  = allScenes?.every(s => s.video_url || s.status === 'error')
+    const anyVideo = allScenes?.some(s => s.video_url)
+    const newStatus = anyVideo && allDone ? 'videos_ready' : 'generating_videos'
+
+    await supabase.from('projects').update({ status: newStatus }).eq('id', id)
+    setProject(p => ({ ...p, status: newStatus }))
+
+    activeRef.current = false
+    setPhase('idle')
+    setCurrentIdx(null)
+    sceneStartRef.current = null
+  }, [id])
 
   // ── Image generation ──────────────────────────────────────────
   const startImageGeneration = async () => {
@@ -136,13 +211,7 @@ export default function ProjectPage() {
       patchScene(scene.id, { status: 'generating_image' })
 
       try {
-        const res = await fetch(`${API_BASE}/api/generate-image`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ image_prompt: scene.image_prompt }),
-        })
-        if (!res.ok) throw new Error((await res.json()).error || `HTTP ${res.status}`)
-        const { image_url } = await res.json()
+        const image_url = await generateImageWithRetry(scene)
 
         const t = Date.now() - sceneStartRef.current
         const times = [...sceneTimesRef.current, t]
@@ -172,9 +241,11 @@ export default function ProjectPage() {
     setPhase('idle')
     setCurrentIdx(null)
     sceneStartRef.current = null
+
+    if (newStatus === 'images_ready') await startVideoGeneration()
   }
 
-  // ── Video generation ──────────────────────────────────────────
+  // ── Video generation — fan-out submit to cloud, then poll ────
   const startVideoGeneration = async () => {
     if (activeRef.current) return
     activeRef.current = true
@@ -182,54 +253,60 @@ export default function ProjectPage() {
     setError('')
     sceneTimesRef.current = []
     setAvgSceneMs(null)
+    setCurrentIdx(null)
+    setCurrentAction('Submitting scenes to cloud…')
 
     await supabase.from('projects').update({ status: 'generating_videos' }).eq('id', id)
     patchProject({ status: 'generating_videos' })
 
     const { data: freshScenes } = await supabase
       .from('scenes').select('*').eq('project_id', id).order('scene_index')
-    const pending = (freshScenes || []).filter(s => s.image_url && !s.video_url)
 
-    for (const scene of pending) {
-      if (!activeRef.current) break
-      setCurrentIdx(scene.scene_index)
-      setCurrentAction('Submitting…')
-      sceneStartRef.current = Date.now()
-      setElapsedSeconds(0)
+    // Only submit scenes not yet queued
+    const toSubmit = (freshScenes || []).filter(s => s.image_url && !s.video_url && !s.video_request_id)
 
-      await supabase.from('scenes').update({ status: 'generating_video' }).eq('id', scene.id)
-      patchScene(scene.id, { status: 'generating_video' })
+    if (toSubmit.length > 0) {
+      const submitRes = await fetch(`${API_BASE}/api/submit-all-videos`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          scenes: toSubmit.map(s => ({ id: s.id, image_url: s.image_url, motion_prompt: s.motion_prompt })),
+        }),
+      })
 
-      try {
-        const video_url = await pollVideoWithRetry(scene)
-        if (!video_url && !activeRef.current) break
+      if (!submitRes.ok) {
+        setError('Failed to submit video jobs to cloud. Please try again.')
+        activeRef.current = false
+        setPhase('idle')
+        return
+      }
 
-        const t = Date.now() - sceneStartRef.current
-        const times = [...sceneTimesRef.current, t]
-        sceneTimesRef.current = times
-        setAvgSceneMs(times.reduce((a, b) => a + b, 0) / times.length)
+      const { submitted, failed } = await submitRes.json()
 
-        await supabase.from('scenes').update({ video_url, status: 'complete' }).eq('id', scene.id)
-        patchScene(scene.id, { video_url, status: 'complete' })
-      } catch (err) {
-        await supabase.from('scenes').update({ status: 'error' }).eq('id', scene.id)
-        patchScene(scene.id, { status: 'error' })
-        setError(`Scene ${scene.scene_index + 1} failed after ${MAX_VIDEO_RETRIES} retries: ${err.message}`)
-        // Continue to next scene — don't block
+      // Persist request_ids so polling survives refresh
+      await Promise.all(
+        submitted.map(({ scene_id, request_id }) =>
+          supabase.from('scenes')
+            .update({ video_request_id: request_id, status: 'generating_video' })
+            .eq('id', scene_id)
+        )
+      )
+      submitted.forEach(({ scene_id, request_id }) =>
+        patchScene(scene_id, { video_request_id: request_id, status: 'generating_video' })
+      )
+
+      if (failed > 0) {
+        const submittedIds = new Set(submitted.map(s => s.scene_id))
+        const failedScenes = toSubmit.filter(s => !submittedIds.has(s.id))
+        await Promise.all(failedScenes.map(s =>
+          supabase.from('scenes').update({ status: 'error' }).eq('id', s.id)
+        ))
+        failedScenes.forEach(s => patchScene(s.id, { status: 'error' }))
+        setError(`${failed} scene${failed > 1 ? 's' : ''} failed to submit.`)
       }
     }
 
-    const { data: allVideos } = await supabase.from('scenes').select('video_url, status').eq('project_id', id)
-    const allHaveVideo = allVideos?.every(s => s.video_url || s.status === 'error')
-    const anyVideo     = allVideos?.some(s => s.video_url)
-    const newStatus    = anyVideo && allHaveVideo ? 'videos_ready' : 'generating_videos'
-    await supabase.from('projects').update({ status: newStatus }).eq('id', id)
-    patchProject({ status: newStatus })
-
-    activeRef.current = false
-    setPhase('idle')
-    setCurrentIdx(null)
-    sceneStartRef.current = null
+    await pollPendingVideos()
   }
 
   // ── Single-scene image retry ──────────────────────────────────
@@ -247,13 +324,7 @@ export default function ProjectPage() {
     patchScene(scene.id, { status: 'generating_image' })
 
     try {
-      const res = await fetch(`${API_BASE}/api/generate-image`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ image_prompt: scene.image_prompt }),
-      })
-      if (!res.ok) throw new Error((await res.json()).error || `HTTP ${res.status}`)
-      const { image_url } = await res.json()
+      const image_url = await generateImageWithRetry(scene)
 
       await supabase.from('scenes').update({ image_url, status: 'complete' }).eq('id', scene.id)
       patchScene(scene.id, { image_url, status: 'complete' })
@@ -264,10 +335,19 @@ export default function ProjectPage() {
       }
 
       const { data: allImages } = await supabase.from('scenes').select('image_url').eq('project_id', id)
-      if (allImages?.every(s => s.image_url)) {
+      const allReady = allImages?.every(s => s.image_url)
+      if (allReady) {
         await supabase.from('projects').update({ status: 'images_ready' }).eq('id', id)
         patchProject({ status: 'images_ready' })
       }
+
+      activeRef.current = false
+      setPhase('idle')
+      setCurrentIdx(null)
+      sceneStartRef.current = null
+
+      if (allReady) await startVideoGeneration()
+      return
     } catch (err) {
       await supabase.from('scenes').update({ status: 'error' }).eq('id', scene.id)
       patchScene(scene.id, { status: 'error' })
@@ -278,47 +358,48 @@ export default function ProjectPage() {
     setPhase('idle')
     setCurrentIdx(null)
     sceneStartRef.current = null
-  }, [id])
+  }, [id, generateImageWithRetry])
 
-  // ── Single-scene video retry ──────────────────────────────────
+  // ── Single-scene video retry — submit to cloud + poll ────────
   const retrySingleScene = useCallback(async (scene) => {
     if (activeRef.current) return
     activeRef.current = true
     setPhase('videos')
     setCurrentIdx(scene.scene_index)
-    setCurrentAction('Retrying…')
+    setCurrentAction('Submitting…')
     sceneStartRef.current = Date.now()
     setElapsedSeconds(0)
     setError('')
 
-    await supabase.from('scenes').update({ status: 'generating_video' }).eq('id', scene.id)
-    patchScene(scene.id, { status: 'generating_video' })
+    await supabase.from('scenes').update({ status: 'generating_video', video_request_id: null }).eq('id', scene.id)
+    setScenes(prev => prev.map(s => s.id === scene.id ? { ...s, status: 'generating_video', video_request_id: null } : s))
 
     try {
-      const video_url = await pollVideoWithRetry(scene)
-      if (video_url) {
-        await supabase.from('scenes').update({ video_url, status: 'complete' }).eq('id', scene.id)
-        patchScene(scene.id, { video_url, status: 'complete' })
+      const submitRes = await fetch(`${API_BASE}/api/submit-all-videos`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ scenes: [{ id: scene.id, image_url: scene.image_url, motion_prompt: scene.motion_prompt }] }),
+      })
+      if (!submitRes.ok) throw new Error((await submitRes.json()).error || `HTTP ${submitRes.status}`)
+      const { submitted } = await submitRes.json()
+      if (!submitted?.length) throw new Error('Job submission failed')
 
-        const { data: allVideos } = await supabase.from('scenes').select('video_url, status').eq('project_id', id)
-        const allDone = allVideos?.every(s => s.video_url || s.status === 'error')
-        const anyVideo = allVideos?.some(s => s.video_url)
-        if (anyVideo && allDone) {
-          await supabase.from('projects').update({ status: 'videos_ready' }).eq('id', id)
-          patchProject({ status: 'videos_ready' })
-        }
-      }
+      const { request_id } = submitted[0]
+      await supabase.from('scenes').update({ video_request_id: request_id }).eq('id', scene.id)
+      setScenes(prev => prev.map(s => s.id === scene.id ? { ...s, video_request_id: request_id } : s))
+
+      setCurrentIdx(null)
+      await pollPendingVideos()
     } catch (err) {
       await supabase.from('scenes').update({ status: 'error' }).eq('id', scene.id)
-      patchScene(scene.id, { status: 'error' })
+      setScenes(prev => prev.map(s => s.id === scene.id ? { ...s, status: 'error' } : s))
       setError(`Retry failed for scene ${scene.scene_index + 1}: ${err.message}`)
+      activeRef.current = false
+      setPhase('idle')
+      setCurrentIdx(null)
+      sceneStartRef.current = null
     }
-
-    activeRef.current = false
-    setPhase('idle')
-    setCurrentIdx(null)
-    sceneStartRef.current = null
-  }, [id, pollVideoWithRetry])
+  }, [id, pollPendingVideos])
 
   const handleSceneRetry = useCallback((scene) => {
     if (!scene.image_url) return retrySingleImage(scene)
@@ -336,32 +417,6 @@ export default function ProjectPage() {
     navigate('/dashboard')
   }
 
-  // ── Derived state ─────────────────────────────────────────────
-  const imgDone = scenes.filter(s => s.image_url).length
-  const vidDone = scenes.filter(s => s.video_url).length
-  const total   = scenes.length
-  const imgPct  = total > 0 ? Math.round((imgDone / total) * 100) : 0
-  const vidPct  = total > 0 ? Math.round((vidDone / total) * 100) : 0
-
-  // Derive effective status from scene data when DB status is stale
-  // (handles imported projects and cases where DB constraint blocked status updates)
-  const deriveStatus = () => {
-    const s = project.status
-    if (s === 'complete' || s === 'assembling') return s
-    if (total > 0 && vidDone === total) return 'videos_ready'
-    if (total > 0 && vidDone > 0) return 'videos_ready'
-    if (total > 0 && imgDone === total) return 'images_ready'
-    return s
-  }
-  const effectiveStatus = phase === 'idle' ? deriveStatus() : project.status
-
-  const formatEta = (remainingScenes) => {
-    if (!avgSceneMs || remainingScenes <= 0) return null
-    const etaSec = Math.round((remainingScenes * avgSceneMs) / 1000)
-    if (etaSec < 60) return `~${etaSec}s`
-    return `~${Math.ceil(etaSec / 60)}m`
-  }
-
   if (loading) return <div className="full-screen-loading"><div className="spinner" /></div>
 
   if (!project) {
@@ -375,6 +430,30 @@ export default function ProjectPage() {
         </main>
       </div>
     )
+  }
+
+  // ── Derived state ─────────────────────────────────────────────
+  const imgDone = scenes.filter(s => s.image_url).length
+  const vidDone = scenes.filter(s => s.video_url).length
+  const total   = scenes.length
+  const imgPct  = total > 0 ? Math.round((imgDone / total) * 100) : 0
+  const vidPct  = total > 0 ? Math.round((vidDone / total) * 100) : 0
+
+  const deriveStatus = () => {
+    const s = project.status
+    if (s === 'complete' || s === 'assembling' || s === 'generating_videos') return s
+    if (total > 0 && vidDone === total) return 'videos_ready'
+    if (total > 0 && vidDone > 0) return 'videos_ready'
+    if (total > 0 && imgDone === total) return 'images_ready'
+    return s
+  }
+  const effectiveStatus = phase === 'idle' ? deriveStatus() : project.status
+
+  const formatEta = (remainingScenes) => {
+    if (!avgSceneMs || remainingScenes <= 0) return null
+    const etaSec = Math.round((remainingScenes * avgSceneMs) / 1000)
+    if (etaSec < 60) return `~${etaSec}s`
+    return `~${Math.ceil(etaSec / 60)}m`
   }
 
   const brief = project.brief
@@ -403,7 +482,7 @@ export default function ProjectPage() {
         {/* ── Active progress banner ── */}
         {phase === 'images' && (
           <ProgressBanner
-            step={`Generating Images`}
+            step="Generating Images"
             detail={`Scene ${(currentIdx ?? 0) + 1} of ${total} — ${currentAction}${elapsedSeconds > 3 ? ` (${elapsedSeconds}s)` : ''}`}
             pct={imgPct}
             done={imgDone}
@@ -413,12 +492,12 @@ export default function ProjectPage() {
         )}
         {phase === 'videos' && (
           <ProgressBanner
-            step={`Animating Scene ${(currentIdx ?? 0) + 1} of ${total}`}
-            detail={`${currentAction}${elapsedSeconds > 3 ? ` — ${elapsedSeconds}s elapsed` : ''}`}
+            step="Animating in Cloud"
+            detail={currentAction}
             pct={vidPct}
             done={vidDone}
             total={total}
-            eta={formatEta(total - vidDone - 1)}
+            eta={null}
           />
         )}
 
@@ -438,6 +517,28 @@ export default function ProjectPage() {
               <button className="btn-primary" onClick={startImageGeneration}>Generate Images →</button>
             </div>
             <p className="tone-summary">{brief.tone_summary}</p>
+          </div>
+        )}
+
+        {/* ── Resume interrupted image generation ── */}
+        {effectiveStatus === 'processing' && phase === 'idle' && scenes.some(s => !s.image_url && s.status !== 'error') && (
+          <div className="ready-banner">
+            <div>
+              <p className="ready-label">Image generation interrupted</p>
+              <p className="ready-sub">{scenes.filter(s => !s.image_url).length} scene{scenes.filter(s => !s.image_url).length !== 1 ? 's' : ''} still need images.</p>
+            </div>
+            <button className="btn-primary" onClick={startImageGeneration}>Resume →</button>
+          </div>
+        )}
+
+        {/* ── Resume video polling (fallback if auto-resume didn't trigger) ── */}
+        {effectiveStatus === 'generating_videos' && phase === 'idle' && scenes.some(s => s.image_url && !s.video_url) && (
+          <div className="ready-banner">
+            <div>
+              <p className="ready-label">Video generation in progress</p>
+              <p className="ready-sub">{scenes.filter(s => s.image_url && !s.video_url).length} scene{scenes.filter(s => s.image_url && !s.video_url).length !== 1 ? 's' : ''} still animating in the cloud.</p>
+            </div>
+            <button className="btn-primary" onClick={startVideoGeneration}>Poll for Results →</button>
           </div>
         )}
 
@@ -566,6 +667,7 @@ function ProgressBanner({ step, detail, pct, done, total, eta }) {
 
 // ── Scene card ─────────────────────────────────────────────────
 function SceneCard({ scene, isActive, activeAction, phase, idlePhase, onRetry }) {
+  const [expanded, setExpanded] = useState(false)
   const hasVideo = !!scene.video_url
   const hasImage = !!scene.image_url
   const isError  = scene.status === 'error'
@@ -573,51 +675,105 @@ function SceneCard({ scene, isActive, activeAction, phase, idlePhase, onRetry })
   const isVidActive = isActive && phase === 'videos'
 
   return (
-    <div className={`gen-scene-card ${isActive ? 'active' : ''} ${hasVideo ? 'has-video' : hasImage ? 'done' : ''} ${isError ? 'has-error' : ''}`}>
-      <div className="gen-scene-thumb">
-        {hasVideo ? (
-          <video src={scene.video_url} loop muted playsInline autoPlay className="scene-video" />
-        ) : hasImage ? (
-          <>
-            <img src={scene.image_url} alt={`Scene ${scene.scene_index + 1}`} />
-            {isVidActive && (
-              <div className="gen-scene-video-overlay">
-                <div className="spinner" />
-                <p>{activeAction}</p>
+    <>
+      <div
+        className={`gen-scene-card ${isActive ? 'active' : ''} ${hasVideo ? 'has-video' : hasImage ? 'done' : ''} ${isError ? 'has-error' : ''}`}
+        onClick={() => setExpanded(true)}
+        style={{ cursor: 'pointer' }}
+      >
+        <div className="gen-scene-thumb">
+          {hasVideo ? (
+            <video src={scene.video_url} loop muted playsInline autoPlay className="scene-video" />
+          ) : hasImage ? (
+            <>
+              <img src={scene.image_url} alt={`Scene ${scene.scene_index + 1}`} />
+              {isVidActive && (
+                <div className="gen-scene-video-overlay">
+                  <div className="spinner" />
+                  <p>{activeAction}</p>
+                </div>
+              )}
+            </>
+          ) : isImgActive ? (
+            <div className="gen-scene-loading">
+              <div className="spinner" />
+              <p>{activeAction}</p>
+            </div>
+          ) : (
+            <div className="gen-scene-placeholder">
+              <span>{scene.scene_index + 1}</span>
+            </div>
+          )}
+
+          {hasVideo && !isError && <div className="gen-scene-done-badge video">▶</div>}
+          {!hasVideo && hasImage && !isError && <div className="gen-scene-done-badge">✓</div>}
+
+          {isError && (
+            <div className="gen-scene-error-overlay">
+              <span className="error-x">✕</span>
+              <p>Failed</p>
+              {idlePhase && (
+                <button className="scene-retry-btn" onClick={e => { e.stopPropagation(); onRetry(scene) }}>↺ Retry</button>
+              )}
+            </div>
+          )}
+        </div>
+        <div className="gen-scene-info">
+          <p className="gen-scene-label">
+            Scene {scene.scene_index + 1}
+            {isError && <span className="scene-error-tag">Error</span>}
+          </p>
+          <p className="gen-scene-desc">{scene.description}</p>
+        </div>
+      </div>
+
+      {expanded && (
+        <div className="scene-detail-overlay" onClick={() => setExpanded(false)}>
+          <div className="scene-detail-modal" onClick={e => e.stopPropagation()}>
+            <div className="scene-detail-header">
+              <h3>Scene {scene.scene_index + 1}</h3>
+              <button className="scene-detail-close" onClick={() => setExpanded(false)}>✕</button>
+            </div>
+
+            {hasVideo ? (
+              <video src={scene.video_url} controls playsInline className="scene-detail-media" />
+            ) : hasImage ? (
+              <img src={scene.image_url} alt={`Scene ${scene.scene_index + 1}`} className="scene-detail-media" />
+            ) : null}
+
+            <div className="scene-detail-body">
+              {scene.description && (
+                <div className="scene-detail-row">
+                  <span className="scene-detail-label">Description</span>
+                  <p className="scene-detail-value">{scene.description}</p>
+                </div>
+              )}
+              {scene.image_prompt && (
+                <div className="scene-detail-row">
+                  <span className="scene-detail-label">Image Prompt</span>
+                  <p className="scene-detail-value">{scene.image_prompt}</p>
+                </div>
+              )}
+              {scene.motion_prompt && (
+                <div className="scene-detail-row">
+                  <span className="scene-detail-label">Motion Prompt</span>
+                  <p className="scene-detail-value">{scene.motion_prompt}</p>
+                </div>
+              )}
+              <div className="scene-detail-row">
+                <span className="scene-detail-label">Status</span>
+                <p className="scene-detail-value" style={{ textTransform: 'capitalize' }}>{scene.status || 'pending'}</p>
               </div>
-            )}
-          </>
-        ) : isImgActive ? (
-          <div className="gen-scene-loading">
-            <div className="spinner" />
-            <p>{activeAction}</p>
-          </div>
-        ) : (
-          <div className="gen-scene-placeholder">
-            <span>{scene.scene_index + 1}</span>
-          </div>
-        )}
+            </div>
 
-        {hasVideo && !isError && <div className="gen-scene-done-badge video">▶</div>}
-        {!hasVideo && hasImage && !isError && <div className="gen-scene-done-badge">✓</div>}
-
-        {isError && (
-          <div className="gen-scene-error-overlay">
-            <span className="error-x">✕</span>
-            <p>Failed</p>
-            {idlePhase && (
-              <button className="scene-retry-btn" onClick={() => onRetry(scene)}>↺ Retry</button>
+            {isError && idlePhase && (
+              <button className="btn-primary" style={{ width: '100%', marginTop: '1rem' }} onClick={() => { onRetry(scene); setExpanded(false) }}>
+                ↺ Retry Image Generation
+              </button>
             )}
           </div>
-        )}
-      </div>
-      <div className="gen-scene-info">
-        <p className="gen-scene-label">
-          Scene {scene.scene_index + 1}
-          {isError && <span className="scene-error-tag">Error</span>}
-        </p>
-        <p className="gen-scene-desc">{scene.description}</p>
-      </div>
-    </div>
+        </div>
+      )}
+    </>
   )
 }
