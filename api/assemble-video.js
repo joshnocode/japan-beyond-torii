@@ -115,6 +115,11 @@ export default async function handler(req, res) {
       join(jobDir, 'merged.mp4'),
     ])
 
+    // Free /tmp space before encoding — all scene clips are now inside merged.mp4
+    await Promise.all(scenes.map((_, i) =>
+      rm(join(jobDir, `scene_${i}.mp4`), { force: true }).catch(() => {})
+    ))
+
     // Step 2: encode — ultrafast preset to stay within timeout
     const srtPath = join(jobDir, 'subs.srt')
     const outputPath = join(jobDir, 'output.mp4')
