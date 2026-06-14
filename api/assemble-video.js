@@ -160,7 +160,10 @@ export default async function handler(req, res) {
     console.log(`[assemble] complete in ${Math.round((Date.now() - t0) / 1000)}s:`, videoUrl)
   } catch (err) {
     console.error('[assemble-video] FAILED:', err.message)
-    await supabase.from('projects').update({ status: 'videos_ready' }).eq('id', project_id).catch(() => {})
+    await supabase.from('projects')
+      .update({ status: 'videos_ready', assembly_error: err.message })
+      .eq('id', project_id)
+      .catch(() => {})
   } finally {
     await rm(jobDir, { recursive: true, force: true }).catch(() => {})
   }

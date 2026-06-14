@@ -1565,6 +1565,13 @@ h1, h2, h3, h4 {
   color: var(--text-muted);
 }
 
+.assembly-build-stamp {
+  margin-top: 6px;
+  font-size: 10px;
+  color: var(--text-muted);
+  opacity: 0.5;
+}
+
 /* Assembly done / final video */
 .assembly-done-panel {
   background: var(--bg-card);

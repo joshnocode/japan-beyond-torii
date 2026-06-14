@@ -46,10 +46,17 @@ export default function AssemblyPanel({ project, scenes, onComplete, onAssemblyS
     }
   }, [project.id, project.video_url])
 
-  // Show persisted error from last failed attempt (survives page reload)
+  // Show error from last failed attempt — prefer DB value (real server error) over localStorage
   useEffect(() => {
+    if (videoUrl) return
     const saved = localStorage.getItem(errKey(project.id))
-    if (saved && !videoUrl) setError(saved)
+    if (!saved) return
+    // Try to get the real server error from DB; fall back to saved string
+    supabase.from('projects').select('assembly_error').eq('id', project.id).single()
+      .then(({ data }) => {
+        setError(data?.assembly_error ? `Assembly failed: ${data.assembly_error}` : saved)
+      })
+      .catch(() => setError(saved))
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   const saveError = (msg) => {
@@ -84,7 +91,7 @@ export default function AssemblyPanel({ project, scenes, onComplete, onAssemblyS
         if (pollStopRef.current) break
 
         const { data: proj } = await supabase
-          .from('projects').select('status, video_url').eq('id', project.id).single()
+          .from('projects').select('status, video_url, assembly_error').eq('id', project.id).single()
 
         if (proj?.video_url) {
           pollStopRef.current = true
@@ -96,7 +103,10 @@ export default function AssemblyPanel({ project, scenes, onComplete, onAssemblyS
         if (proj?.status === 'videos_ready') {
           pollStopRef.current = true
           localStorage.removeItem(lsKey(project.id))
-          saveError('Assembly failed on the server — tap "Assemble →" to retry.')
+          const msg = proj.assembly_error
+            ? `Assembly failed: ${proj.assembly_error}`
+            : 'Assembly failed on the server — tap "Assemble →" to retry.'
+          saveError(msg)
           setRunning(false)
           return
         }
@@ -256,8 +266,12 @@ export default function AssemblyPanel({ project, scenes, onComplete, onAssemblyS
           <div className="assembly-progress-bar-wrap">
             <div className="assembly-progress-bar" style={{ width: `${pct}%` }} />
           </div>
-          <p className="assembly-progress-label">{elapsed}s elapsed · {pct}% estimated</p>
+          <p className="assembly-progress-label">{elapsed}s elapsed · {pct}% estimated · build {new Date(__BUILD_TIME__).toLocaleTimeString()}</p>
         </div>
+      )}
+
+      {!running && (
+        <p className="assembly-build-stamp">v {new Date(__BUILD_TIME__).toUTCString()}</p>
       )}
 
       {error && (
