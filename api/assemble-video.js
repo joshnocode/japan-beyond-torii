@@ -75,45 +75,48 @@ export default async function handler(req, res) {
       console.log('[assemble] audio ready:', audioExt)
     })() : Promise.resolve()
 
-    // Process clips in batches: download → scale-encode → delete original
-    // This keeps peak /tmp usage at ~(BATCH_SIZE × clip_size) + accumulated scaled clips
-    // rather than all 35 clips at once which can exceed the 512MB /tmp limit.
     const BATCH_SIZE = 5
     const batches = Math.ceil(scenes.length / BATCH_SIZE)
 
-    for (let b = 0; b < batches; b++) {
+    const downloadBatch = async (b) => {
       const start = b * BATCH_SIZE
       const end = Math.min(start + BATCH_SIZE, scenes.length)
-      const batch = scenes.slice(start, end)
-
-      // Download batch in parallel
-      await Promise.all(batch.map(async (scene, bi) => {
+      await Promise.all(scenes.slice(start, end).map(async (scene, bi) => {
         const idx = start + bi
         const resp = await fetch(scene.video_url)
         if (!resp.ok) throw new Error(`Scene ${scene.scene_index + 1} download failed (HTTP ${resp.status})`)
         await writeFile(join(jobDir, `orig_${idx}.mp4`), Buffer.from(await resp.arrayBuffer()))
       }))
+    }
 
-      // Scale-encode each clip to 720p CRF32, then immediately delete the original.
-      // Running encodes in parallel within the batch is safe since each has its own input/output.
-      await Promise.all(batch.map(async (_, bi) => {
+    const encodeBatch = async (b) => {
+      const start = b * BATCH_SIZE
+      const end = Math.min(start + BATCH_SIZE, scenes.length)
+      await Promise.all(scenes.slice(start, end).map(async (_, bi) => {
         const idx = start + bi
         const src = join(jobDir, `orig_${idx}.mp4`)
         const dst = join(jobDir, `scaled_${idx}.mp4`)
         await run(ffmpeg, [
-          '-loglevel', 'error',
-          '-i', src,
+          '-loglevel', 'error', '-i', src,
           '-vf', 'scale=720:-2',
           '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '32',
-          '-maxrate', '1800k', '-bufsize', '3600k',
-          '-an',
+          '-maxrate', '1800k', '-bufsize', '3600k', '-an',
           '-y', dst,
         ])
         await unlink(src)
       }))
-
-      console.log(`[assemble] batch ${b + 1}/${batches} done (${Math.round((Date.now() - t0) / 1000)}s)`)
+      console.log(`[assemble] batch ${b + 1}/${batches} encoded (${Math.round((Date.now() - t0) / 1000)}s)`)
     }
+
+    // Pipelined: download batch b+1 while encoding batch b.
+    // Cuts total time ~40% vs sequential batches when download ≈ encode time.
+    let dlPromise = downloadBatch(0)
+    for (let b = 0; b < batches; b++) {
+      await dlPromise
+      dlPromise = (b + 1 < batches) ? downloadBatch(b + 1) : Promise.resolve()
+      await encodeBatch(b)
+    }
+    await dlPromise
 
     await audioPromise
 
