@@ -3,8 +3,9 @@ import { supabase } from '../lib/supabase'
 
 const API_BASE = import.meta.env.DEV ? 'http://localhost:3000' : ''
 const lsKey = (id) => `jbt_assembling_${id}`
+const RESUME_WINDOW_MS = 5 * 60 * 1000  // 5 min — Vercel max duration
+const GIVE_UP_MS = 7 * 60 * 1000        // 7 min — bail and show retry
 
-// Rough estimate: ~4s per scene (streaming + encoding at ultrafast 720p)
 const estimateSecs = (sceneCount) => Math.max(90, sceneCount * 4)
 
 function fmt(secs) {
@@ -18,25 +19,25 @@ export default function AssemblyPanel({ project, scenes, onComplete, onAssemblyS
   const [error, setError] = useState('')
   const [videoUrl, setVideoUrl] = useState(project.video_url || null)
   const [elapsed, setElapsed] = useState(0)
-  const startRef = useRef(null)
-  const pollStopRef = useRef(false)
 
-  const hasAudio = !!project.audio_url
+  const startRef     = useRef(null)   // ms timestamp when assembly actually began
+  const pollStopRef  = useRef(false)
+
+  const hasAudio  = !!project.audio_url
   const estimated = estimateSecs(scenes.length)
-  const pct = running ? Math.min(99, Math.round((elapsed / estimated) * 100)) : 0
+  const pct       = running ? Math.min(99, Math.round((elapsed / estimated) * 100)) : 0
   const remaining = Math.max(0, estimated - elapsed)
 
-  // Elapsed timer while running
+  // Elapsed timer — only starts startRef if not already set (preserves resume timestamp)
   useEffect(() => {
     if (!running) { setElapsed(0); startRef.current = null; return }
-    startRef.current = Date.now()
+    if (!startRef.current) startRef.current = Date.now()
     const tid = setInterval(() => {
       setElapsed(Math.floor((Date.now() - startRef.current) / 1000))
     }, 1000)
     return () => clearInterval(tid)
   }, [running])
 
-  // Clear stale localStorage marker if the project already has a video
   useEffect(() => {
     if (project.video_url) localStorage.removeItem(lsKey(project.id))
   }, [project.id, project.video_url])
@@ -47,21 +48,53 @@ export default function AssemblyPanel({ project, scenes, onComplete, onAssemblyS
     onComplete?.(url)
   }
 
+  // Poll-only resume: server is still running, just wait for it
+  const resumePoll = async (startedAt) => {
+    pollStopRef.current = false
+    startRef.current = startedAt  // restore original start time so elapsed is correct
+    setRunning(true)
+
+    while (!pollStopRef.current) {
+      await new Promise(r => setTimeout(r, 8000))
+      if (pollStopRef.current) break
+
+      const { data: proj } = await supabase
+        .from('projects').select('status, video_url').eq('id', project.id).single()
+
+      if (proj?.video_url) {
+        pollStopRef.current = true
+        handleDone(proj.video_url)
+        setRunning(false)
+        return
+      }
+
+      const age = Date.now() - startedAt
+      if (age > GIVE_UP_MS) {
+        localStorage.removeItem(lsKey(project.id))
+        setError('Assembly timed out. Tap "Assemble →" to retry.')
+        setRunning(false)
+        return
+      }
+    }
+    setRunning(false)
+  }
+
   const startAssembly = async () => {
     if (running) return
     setError('')
-    setRunning(true)
     pollStopRef.current = false
 
-    // Synchronous write — survives page refresh even if Supabase update is slow
-    localStorage.setItem(lsKey(project.id), Date.now().toString())
+    const now = Date.now()
+    localStorage.setItem(lsKey(project.id), now.toString())
+    startRef.current = now  // set before setRunning so timer effect doesn't overwrite
+
+    setRunning(true)
 
     await supabase.from('projects').update({ status: 'assembling' }).eq('id', project.id)
     onAssemblyStart?.()
 
-    // Poll Supabase in parallel every 10s — catches completion even if fetch connection drops
-    // (common on mobile when screen locks or browser backgrounds during a long request)
-    const pollLoop = async () => {
+    // Parallel poll: detects completion even if the fetch connection drops on mobile
+    const parallelPoll = async () => {
       while (!pollStopRef.current) {
         await new Promise(r => setTimeout(r, 10000))
         if (pollStopRef.current) break
@@ -73,10 +106,9 @@ export default function AssemblyPanel({ project, scenes, onComplete, onAssemblyS
           setRunning(false)
           return
         }
-        if (proj?.status !== 'assembling') break
       }
     }
-    pollLoop() // fire-and-forget
+    parallelPoll()
 
     try {
       const { data: { session } } = await supabase.auth.getSession()
@@ -98,38 +130,45 @@ export default function AssemblyPanel({ project, scenes, onComplete, onAssemblyS
 
       const { video_url } = await res.json()
       handleDone(video_url)
+      setRunning(false)
     } catch (err) {
       pollStopRef.current = true
       const msg = err.message || 'Assembly failed'
 
-      // Network-level failure: fetch never got a response (mobile backgrounded, timeout, crash)
       if (msg === 'Load failed' || msg === 'Failed to fetch' || msg.includes('NetworkError')) {
-        // Check if the assembly actually finished despite the dropped connection
+        // Connection dropped — check if it actually completed
         const { data: proj } = await supabase
           .from('projects').select('status, video_url').eq('id', project.id).single()
         if (proj?.video_url) {
           handleDone(proj.video_url)
+          setRunning(false)
           return
         }
-        setError(
-          proj?.status === 'assembling'
-            ? 'Connection dropped while assembly was running. It may still complete — refresh in a minute to check, or tap "Assemble →" to retry.'
-            : `Connection lost (${msg}). Tap "Assemble →" to retry.`
-        )
-      } else {
-        setError(msg)
+        // Still assembling — switch to poll-only mode
+        setError('Connection dropped — still checking for completion…')
+        pollStopRef.current = false
+        resumePoll(now)
+        return
       }
-    } finally {
+
+      setError(msg)
       setRunning(false)
     }
   }
 
-  // Auto-resume on mount: triggered by DB status (autoStart) OR localStorage marker
+  // On mount: resume (poll-only) if server is likely still running, otherwise start fresh
   useEffect(() => {
     if (videoUrl) return
     const ts = localStorage.getItem(lsKey(project.id))
-    const recentAttempt = ts && Date.now() - parseInt(ts) < 10 * 60 * 1000
-    if (autoStart || recentAttempt) startAssembly()
+    const startedAt = ts ? parseInt(ts) : null
+    const age = startedAt ? Date.now() - startedAt : Infinity
+
+    if (startedAt && age < RESUME_WINDOW_MS) {
+      // Server started < 5 min ago — don't fire a duplicate API call, just poll + restore timer
+      resumePoll(startedAt)
+    } else if (autoStart || (startedAt && age < GIVE_UP_MS)) {
+      startAssembly()
+    }
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   if (videoUrl) {
