@@ -57,6 +57,19 @@ export default async function handler(req, res) {
   const missing = (scenes || []).filter(s => !s.video_url)
   if (missing.length) return res.status(400).json({ error: `${missing.length} scenes are missing video` })
 
+  // Guard against duplicate jobs — if already assembling, just tell the client to poll
+  if (project.status === 'assembling' && !project.video_url) {
+    return res.status(202).json({ status: 'assembling', alreadyRunning: true })
+  }
+
+  // Mark assembling in DB, then respond immediately so the client can disconnect.
+  // Assembly continues running in the Vercel background up to maxDuration.
+  // The frontend polls Supabase for completion — no need to stay on the page.
+  await supabase.from('projects').update({ status: 'assembling' }).eq('id', project_id)
+  res.status(202).json({ status: 'assembling' })
+
+  // ─── Everything below runs after the client has received the response ───
+
   const jobDir = join(tmpdir(), `assembly_${Date.now()}`)
   await mkdir(jobDir, { recursive: true })
 
@@ -65,7 +78,7 @@ export default async function handler(req, res) {
     const ffmpeg = await getFFmpeg()
     console.log(`[assemble] start — ${scenes.length} scenes, project ${project_id}`)
 
-    // Download audio in background so it's ready by the time we need it
+    // Download audio in background while processing video clips
     let audioExt = null
     const audioPromise = project.audio_url ? (async () => {
       const resp = await fetch(project.audio_url)
@@ -108,8 +121,7 @@ export default async function handler(req, res) {
       console.log(`[assemble] batch ${b + 1}/${batches} encoded (${Math.round((Date.now() - t0) / 1000)}s)`)
     }
 
-    // Pipelined: download batch b+1 while encoding batch b.
-    // Cuts total time ~40% vs sequential batches when download ≈ encode time.
+    // Pipeline: download batch b+1 while encoding batch b
     let dlPromise = downloadBatch(0)
     for (let b = 0; b < batches; b++) {
       await dlPromise
@@ -117,17 +129,13 @@ export default async function handler(req, res) {
       await encodeBatch(b)
     }
     await dlPromise
-
     await audioPromise
 
-    // Build concat list of all scaled clips
+    // Stream-copy concat (clips already encoded at identical settings — SPS/PPS match)
     const listPath = join(jobDir, 'list.txt')
     await writeFile(listPath, scenes.map((_, i) => `file '${join(jobDir, `scaled_${i}.mp4`)}'`).join('\n'))
 
     const outputPath = join(jobDir, 'output.mp4')
-
-    // Stream-copy concat: all per-clip encodes used identical settings so SPS/PPS match.
-    // Saves ~70s vs re-encoding 175s of video, keeping total well under the 300s limit.
     const concatArgs = ['-loglevel', 'error', '-f', 'concat', '-safe', '0', '-i', listPath]
     if (audioExt) concatArgs.push('-i', join(jobDir, `audio.${audioExt}`))
     if (audioExt) concatArgs.push('-map', '0:v:0', '-map', '1:a:0')
@@ -137,9 +145,8 @@ export default async function handler(req, res) {
 
     console.log('[assemble] concat + audio mux')
     await run(ffmpeg, concatArgs)
-    console.log(`[assemble] encode done (${Math.round((Date.now() - t0) / 1000)}s total)`)
+    console.log(`[assemble] encode done (${Math.round((Date.now() - t0) / 1000)}s)`)
 
-    // Upload to Supabase
     const outputBuf = await readFile(outputPath)
     const sizeMB = Math.round(outputBuf.length / 1024 / 1024)
     console.log('[assemble] output:', sizeMB, 'MB — uploading')
@@ -156,12 +163,9 @@ export default async function handler(req, res) {
 
     await supabase.from('projects').update({ video_url: videoUrl, status: 'complete' }).eq('id', project_id)
     console.log(`[assemble] complete in ${Math.round((Date.now() - t0) / 1000)}s:`, videoUrl)
-
-    return res.status(200).json({ video_url: videoUrl })
   } catch (err) {
     console.error('[assemble-video] FAILED:', err.message)
     await supabase.from('projects').update({ status: 'videos_ready' }).eq('id', project_id).catch(() => {})
-    return res.status(500).json({ error: err.message || 'Assembly failed' })
   } finally {
     await rm(jobDir, { recursive: true, force: true }).catch(() => {})
   }

@@ -4,7 +4,6 @@ import { supabase } from '../lib/supabase'
 const API_BASE = import.meta.env.DEV ? 'http://localhost:3000' : ''
 const lsKey = (id) => `jbt_assembling_${id}`
 const errKey = (id) => `jbt_last_err_${id}`
-const RESUME_WINDOW_MS = 6 * 60 * 1000
 const GIVE_UP_MS = 10 * 60 * 1000
 
 // Batched encode: ~8s per batch of 5 clips + 10s overhead
@@ -47,7 +46,7 @@ export default function AssemblyPanel({ project, scenes, onComplete, onAssemblyS
     }
   }, [project.id, project.video_url])
 
-  // On mount: show persisted error from last failed attempt (survives page reload)
+  // Show persisted error from last failed attempt (survives page reload)
   useEffect(() => {
     const saved = localStorage.getItem(errKey(project.id))
     if (saved && !videoUrl) setError(saved)
@@ -67,68 +66,64 @@ export default function AssemblyPanel({ project, scenes, onComplete, onAssemblyS
     localStorage.removeItem(lsKey(project.id))
     localStorage.removeItem(errKey(project.id))
     setVideoUrl(url)
+    setRunning(false)
     onComplete?.(url)
   }
 
-  const resumePoll = async (startedAt) => {
+  // Pure polling — assembly runs in cloud, we just watch DB
+  const startPolling = (startedAt) => {
     pollStopRef.current = false
-    startRef.current = startedAt
+    const t = startedAt || startRef.current || Date.now()
+    startRef.current = t
     setRunning(true)
     onAssemblyStart?.()
 
-    while (!pollStopRef.current) {
-      await new Promise(r => setTimeout(r, 8000))
-      if (pollStopRef.current) break
+    const poll = async () => {
+      while (!pollStopRef.current) {
+        await new Promise(r => setTimeout(r, 8000))
+        if (pollStopRef.current) break
 
-      const { data: proj } = await supabase
-        .from('projects').select('status, video_url').eq('id', project.id).single()
+        const { data: proj } = await supabase
+          .from('projects').select('status, video_url').eq('id', project.id).single()
 
-      if (proj?.video_url) {
-        pollStopRef.current = true
-        handleDone(proj.video_url)
-        setRunning(false)
-        return
+        if (proj?.video_url) {
+          pollStopRef.current = true
+          handleDone(proj.video_url)
+          return
+        }
+
+        // Server marked failure — status reverted to videos_ready
+        if (proj?.status === 'videos_ready') {
+          pollStopRef.current = true
+          localStorage.removeItem(lsKey(project.id))
+          saveError('Assembly failed on the server — tap "Assemble →" to retry.')
+          setRunning(false)
+          return
+        }
+
+        const age = Date.now() - t
+        if (age > GIVE_UP_MS) {
+          pollStopRef.current = true
+          localStorage.removeItem(lsKey(project.id))
+          saveError('Assembly timed out — server took too long. Tap "Assemble →" to retry.')
+          setRunning(false)
+          return
+        }
       }
-
-      const age = Date.now() - startedAt
-      if (age > GIVE_UP_MS) {
-        localStorage.removeItem(lsKey(project.id))
-        saveError('Assembly timed out — server took too long. Tap "Assemble →" to retry.')
-        setRunning(false)
-        return
-      }
+      setRunning(false)
     }
-    setRunning(false)
+
+    poll()
   }
 
   const startAssembly = async () => {
     if (running) return
     clearError()
-    pollStopRef.current = false
+    pollStopRef.current = true // stop any existing poll
 
     const now = Date.now()
     localStorage.setItem(lsKey(project.id), now.toString())
     startRef.current = now
-    setRunning(true)
-
-    await supabase.from('projects').update({ status: 'assembling' }).eq('id', project.id)
-    onAssemblyStart?.()
-
-    const parallelPoll = async () => {
-      while (!pollStopRef.current) {
-        await new Promise(r => setTimeout(r, 10000))
-        if (pollStopRef.current) break
-        const { data: proj } = await supabase
-          .from('projects').select('status, video_url').eq('id', project.id).single()
-        if (proj?.video_url) {
-          pollStopRef.current = true
-          handleDone(proj.video_url)
-          setRunning(false)
-          return
-        }
-      }
-    }
-    parallelPoll()
 
     try {
       const { data: { session } } = await supabase.auth.getSession()
@@ -141,51 +136,54 @@ export default function AssemblyPanel({ project, scenes, onComplete, onAssemblyS
         body: JSON.stringify({ project_id: project.id }),
       })
 
-      pollStopRef.current = true
+      if (res.status === 202) {
+        // Assembly kicked off in cloud — switch to poll mode
+        onAssemblyStart?.()
+        startPolling(now)
+        return
+      }
 
       if (!res.ok) {
         const body = await res.json().catch(() => ({}))
         throw new Error(body.error || `Server error ${res.status}`)
       }
 
-      const { video_url } = await res.json()
-      handleDone(video_url)
-      setRunning(false)
+      // Shouldn't normally reach here, but handle gracefully
+      startPolling(now)
     } catch (err) {
-      pollStopRef.current = true
       const msg = err.message || 'Assembly failed'
-
+      // Network error: server may still be running — poll to find out
       if (msg === 'Load failed' || msg === 'Failed to fetch' || msg.includes('NetworkError')) {
-        const { data: proj } = await supabase
-          .from('projects').select('status, video_url').eq('id', project.id).single()
-        if (proj?.video_url) {
-          handleDone(proj.video_url)
-          setRunning(false)
-          return
-        }
-        saveError('Connection dropped — still checking for completion…')
-        pollStopRef.current = false
-        resumePoll(now)
+        onAssemblyStart?.()
+        startPolling(now)
         return
       }
-
-      // Definitive server error — persist so user sees it after page reload
+      // Hard client-side error (e.g. auth failure)
       localStorage.removeItem(lsKey(project.id))
-      await supabase.from('projects').update({ status: 'videos_ready' }).eq('id', project.id).catch(() => {})
       saveError(msg)
-      setRunning(false)
     }
   }
 
+  // On mount: resume polling if assembly was in-flight (works across page reloads / app closes)
   useEffect(() => {
     if (videoUrl) return
+
     const ts = localStorage.getItem(lsKey(project.id))
     const startedAt = ts ? parseInt(ts) : null
     const age = startedAt ? Date.now() - startedAt : Infinity
 
-    if (startedAt && age < RESUME_WINDOW_MS) {
-      resumePoll(startedAt)
-    } else if (autoStart || (startedAt && age < GIVE_UP_MS)) {
+    // DB says assembling — always resume poll regardless of localStorage age
+    if (project.status === 'assembling' && !project.video_url) {
+      startPolling(startedAt || Date.now())
+      return
+    }
+
+    if (startedAt && age < GIVE_UP_MS) {
+      startPolling(startedAt)
+      return
+    }
+
+    if (autoStart) {
       startAssembly()
     }
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
@@ -248,7 +246,7 @@ export default function AssemblyPanel({ project, scenes, onComplete, onAssemblyS
             <div className="spinner" />
             <div style={{ flex: 1 }}>
               <p className="gen-step">Assembling in Cloud</p>
-              <p className="gen-detail">Downloading · encoding · uploading</p>
+              <p className="gen-detail">You can close this page — we'll finish in the background</p>
             </div>
             <span className="assembly-eta">{fmt(remaining, elapsed, estimated)} left</span>
           </div>
