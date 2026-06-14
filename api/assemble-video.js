@@ -74,7 +74,8 @@ export default async function handler(req, res) {
   const missing = (scenes || []).filter(s => !s.video_url)
   if (missing.length) return res.status(400).json({ error: `${missing.length} scenes are missing video` })
 
-  // Validate all video URLs before starting any heavy work
+  // Validate all video URLs before starting heavy work
+  console.log('[assemble] validating', scenes.length, 'video URLs')
   const urlChecks = await Promise.all(
     (scenes || []).map(async (scene) => {
       try {
@@ -96,62 +97,76 @@ export default async function handler(req, res) {
   await mkdir(jobDir, { recursive: true })
 
   try {
+    const t0 = Date.now()
     const ffmpeg = await getFFmpeg()
 
-    // Download all clips in parallel — fast, avoids sequential HTTP in FFmpeg
-    console.log('[assemble] downloading', scenes.length, 'clips in parallel')
-    await Promise.all(scenes.map(async (scene, i) => {
-      const resp = await fetch(scene.video_url)
-      if (!resp.ok) throw new Error(`Scene ${scene.scene_index + 1} download failed (HTTP ${resp.status})`)
-      await writeFile(join(jobDir, `scene_${i}.mp4`), Buffer.from(await resp.arrayBuffer()))
-    }))
-    console.log('[assemble] all clips downloaded')
-
-    await writeFile(join(jobDir, 'subs.srt'), buildSRT(scenes, project.brief))
-
-    // Download audio
+    // Download all clips + audio in parallel
+    console.log('[assemble] downloading', scenes.length, 'clips + audio in parallel')
     let audioExt = null
-    if (project.audio_url) {
+    const audioPromise = project.audio_url ? (async () => {
       const resp = await fetch(project.audio_url)
       if (resp.ok) {
         audioExt = (project.audio_url.split('.').pop().split('?')[0] || 'mp3').toLowerCase()
         await writeFile(join(jobDir, `audio.${audioExt}`), Buffer.from(await resp.arrayBuffer()))
+        console.log('[assemble] audio downloaded:', audioExt)
       }
-    }
+    })() : Promise.resolve()
 
-    // Build filter_complex: concat all clips → scale to 720p → subtitles
-    // Using filter_complex avoids writing an intermediate merged.mp4 (saves ~300MB of /tmp)
-    // Peak disk: clips (~256MB) + output.mp4 (~40MB) — well within the 512MB Lambda limit
-    const n = scenes.length
+    await Promise.all([
+      ...scenes.map(async (scene, i) => {
+        const resp = await fetch(scene.video_url)
+        if (!resp.ok) throw new Error(`Scene ${scene.scene_index + 1} download failed (HTTP ${resp.status})`)
+        await writeFile(join(jobDir, `scene_${i}.mp4`), Buffer.from(await resp.arrayBuffer()))
+      }),
+      audioPromise,
+    ])
+    console.log(`[assemble] all downloads done in ${Math.round((Date.now() - t0) / 1000)}s`)
+
+    // Write SRT and concat list
+    await writeFile(join(jobDir, 'subs.srt'), buildSRT(scenes, project.brief))
+    const listPath = join(jobDir, 'list.txt')
+    await writeFile(listPath, scenes.map((_, i) => `file '${join(jobDir, `scene_${i}.mp4`)}'`).join('\n'))
+
     const srtPath = join(jobDir, 'subs.srt')
     const outputPath = join(jobDir, 'output.mp4')
 
-    const concatInputs = Array.from({ length: n }, (_, i) => `[${i}:v]`).join('')
-    const filterWithSubs = `${concatInputs}concat=n=${n}:v=1:a=0[cv];[cv]scale=720:-2[sv];[sv]subtitles=${srtPath}:force_style='FontSize=18,PrimaryColour=&HFFFFFF&,OutlineColour=&H00000000,Outline=2,BorderStyle=1,Alignment=2,MarginV=40'[outv]`
-    const filterNoSubs = `${concatInputs}concat=n=${n}:v=1:a=0[cv];[cv]scale=720:-2[outv]`
-
-    const buildArgs = (filterComplex) => {
-      const args = ['-loglevel', 'error']
-      scenes.forEach((_, i) => args.push('-i', join(jobDir, `scene_${i}.mp4`)))
+    // Use -f concat demuxer so FFmpeg processes clips sequentially (one decoder context
+    // at a time) instead of opening all 35 simultaneously via filter_complex.
+    // This avoids the massive overhead that caused the 261s+ timeout.
+    const buildArgs = (withSubs) => {
+      const args = ['-loglevel', 'error', '-f', 'concat', '-safe', '0', '-i', listPath]
       if (audioExt) args.push('-i', join(jobDir, `audio.${audioExt}`))
-      args.push('-filter_complex', filterComplex, '-map', '[outv]')
-      if (audioExt) args.push('-map', `${n}:a:0`, '-c:a', 'aac', '-b:a', '128k', '-shortest')
+
+      const vf = withSubs
+        ? `scale=720:-2,subtitles=${srtPath}:force_style='FontSize=18,PrimaryColour=&HFFFFFF&,OutlineColour=&H00000000,Outline=2,BorderStyle=1,Alignment=2,MarginV=40'`
+        : 'scale=720:-2'
+      args.push('-vf', vf)
+
+      if (audioExt) args.push('-map', '0:v:0', '-map', '1:a:0', '-c:a', 'aac', '-b:a', '128k', '-shortest')
       args.push('-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '28', '-y', outputPath)
       return args
     }
 
-    console.log('[assemble] starting ffmpeg encode')
+    const tEncode = Date.now()
+    console.log('[assemble] starting ffmpeg encode with concat demuxer (sequential clip processing)')
     try {
-      await run(ffmpeg, buildArgs(filterWithSubs))
+      await run(ffmpeg, buildArgs(true))
+      console.log('[assemble] encode with subtitles done')
     } catch (subErr) {
-      console.log('[assemble] subtitle encode failed, retrying without subs:', subErr.message.slice(0, 200))
-      await run(ffmpeg, buildArgs(filterNoSubs))
+      console.log('[assemble] subtitle encode failed, retrying without subs:', subErr.message.slice(0, 300))
+      await run(ffmpeg, buildArgs(false))
+      console.log('[assemble] encode without subtitles done')
     }
-    console.log('[assemble] encode done, uploading')
+    console.log(`[assemble] encode completed in ${Math.round((Date.now() - tEncode) / 1000)}s`)
 
-    // Upload to Supabase
+    // Upload to Supabase storage
     const outputBuf = await readFile(outputPath)
-    console.log('[assemble] output size:', Math.round(outputBuf.length / 1024 / 1024), 'MB')
+    const sizeMB = Math.round(outputBuf.length / 1024 / 1024)
+    console.log('[assemble] output size:', sizeMB, 'MB — uploading')
+    if (sizeMB > 49) {
+      console.warn('[assemble] WARNING: file is', sizeMB, 'MB — may hit Supabase 50MB free tier limit')
+    }
+
     const storagePath = `${project.user_id}/${project_id}/final.mp4`
     const { error: uploadErr } = await supabase.storage
       .from('project-assets')
@@ -162,7 +177,7 @@ export default async function handler(req, res) {
     const videoUrl = urlData.publicUrl
 
     await supabase.from('projects').update({ video_url: videoUrl, status: 'complete' }).eq('id', project_id)
-    console.log('[assemble] done:', videoUrl)
+    console.log(`[assemble] complete in ${Math.round((Date.now() - t0) / 1000)}s total:`, videoUrl)
 
     return res.status(200).json({ video_url: videoUrl })
   } catch (err) {
