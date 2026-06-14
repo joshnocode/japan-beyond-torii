@@ -132,32 +132,31 @@ export default async function handler(req, res) {
 
     // Use -f concat demuxer so FFmpeg processes clips sequentially (one decoder context
     // at a time) instead of opening all 35 simultaneously via filter_complex.
-    // This avoids the massive overhead that caused the 261s+ timeout.
-    const buildArgs = (withSubs) => {
+    // Subtitles are added as a soft track (mov_text) — burning them in via libass
+    // renders ~4200 frames of text and can add 200+ seconds to the encode time alone.
+    const buildArgs = () => {
       const args = ['-loglevel', 'error', '-f', 'concat', '-safe', '0', '-i', listPath]
       if (audioExt) args.push('-i', join(jobDir, `audio.${audioExt}`))
+      args.push('-i', srtPath)
 
-      const vf = withSubs
-        ? `scale=720:-2,subtitles=${srtPath}:force_style='FontSize=18,PrimaryColour=&HFFFFFF&,OutlineColour=&H00000000,Outline=2,BorderStyle=1,Alignment=2,MarginV=40'`
-        : 'scale=720:-2'
-      args.push('-vf', vf)
+      const audioIdx = audioExt ? 1 : 0
+      const subIdx = audioIdx + 1
+      args.push('-map', '0:v:0')
+      if (audioExt) args.push('-map', '1:a:0')
+      args.push('-map', `${subIdx}:0`)
 
-      if (audioExt) args.push('-map', '0:v:0', '-map', '1:a:0', '-c:a', 'aac', '-b:a', '128k', '-shortest')
-      // CRF 32 + maxrate cap keeps 35 × 5s clips well under Supabase's 50MB free tier limit
-      args.push('-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '32', '-maxrate', '1800k', '-bufsize', '3600k', '-y', outputPath)
+      args.push('-vf', 'scale=720:-2')
+      // CRF 32 + maxrate cap keeps output well under Supabase's 50MB free tier limit
+      args.push('-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '32', '-maxrate', '1800k', '-bufsize', '3600k')
+      if (audioExt) args.push('-c:a', 'aac', '-b:a', '128k', '-shortest')
+      args.push('-c:s', 'mov_text', '-metadata:s:s:0', 'language=eng')
+      args.push('-y', outputPath)
       return args
     }
 
     const tEncode = Date.now()
-    console.log('[assemble] starting ffmpeg encode with concat demuxer (sequential clip processing)')
-    try {
-      await run(ffmpeg, buildArgs(true))
-      console.log('[assemble] encode with subtitles done')
-    } catch (subErr) {
-      console.log('[assemble] subtitle encode failed, retrying without subs:', subErr.message.slice(0, 300))
-      await run(ffmpeg, buildArgs(false))
-      console.log('[assemble] encode without subtitles done')
-    }
+    console.log('[assemble] starting ffmpeg encode (soft subtitles, no libass render)')
+    await run(ffmpeg, buildArgs())
     console.log(`[assemble] encode completed in ${Math.round((Date.now() - tEncode) / 1000)}s`)
 
     // Upload to Supabase storage
