@@ -3,15 +3,16 @@ import { supabase } from '../lib/supabase'
 
 const API_BASE = import.meta.env.DEV ? 'http://localhost:3000' : ''
 const lsKey = (id) => `jbt_assembling_${id}`
-const RESUME_WINDOW_MS = 5 * 60 * 1000  // 5 min — Vercel max duration
-const GIVE_UP_MS = 7 * 60 * 1000        // 7 min — bail and show retry
+const RESUME_WINDOW_MS = 6 * 60 * 1000  // 6 min — Vercel max duration + buffer
+const GIVE_UP_MS = 10 * 60 * 1000       // 10 min — bail and show retry
 
 const estimateSecs = (sceneCount) => Math.max(90, sceneCount * 4)
 
-function fmt(secs) {
-  if (secs <= 0) return 'almost done…'
-  if (secs < 60) return `~${secs}s`
-  return `~${Math.ceil(secs / 60)}m`
+function fmt(remaining, elapsed, estimated) {
+  if (elapsed > estimated * 1.2) return 'still working…'
+  if (remaining <= 0) return 'almost done…'
+  if (remaining < 60) return `~${remaining}s`
+  return `~${Math.ceil(remaining / 60)}m`
 }
 
 export default function AssemblyPanel({ project, scenes, onComplete, onAssemblyStart, autoStart }) {
@@ -53,6 +54,7 @@ export default function AssemblyPanel({ project, scenes, onComplete, onAssemblyS
     pollStopRef.current = false
     startRef.current = startedAt  // restore original start time so elapsed is correct
     setRunning(true)
+    onAssemblyStart?.()  // update project status badge to ASSEMBLING in parent
 
     while (!pollStopRef.current) {
       await new Promise(r => setTimeout(r, 8000))
@@ -231,7 +233,7 @@ export default function AssemblyPanel({ project, scenes, onComplete, onAssemblyS
               <p className="gen-step">Assembling in Cloud</p>
               <p className="gen-detail">Streaming · encoding · uploading</p>
             </div>
-            <span className="assembly-eta">{fmt(remaining)} left</span>
+            <span className="assembly-eta">{fmt(remaining, elapsed, estimated)} left</span>
           </div>
           <div className="assembly-progress-bar-wrap">
             <div className="assembly-progress-bar" style={{ width: `${pct}%` }} />
