@@ -1,7 +1,7 @@
 import { createClient } from '@supabase/supabase-js'
 import { execFile } from 'node:child_process'
 import { join } from 'node:path'
-import { writeFile, readFile, mkdir, rm, chmod, copyFile, unlink } from 'node:fs/promises'
+import { writeFile, readFile, mkdir, rm, chmod, copyFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import ffmpegStaticPath from 'ffmpeg-static'
 
@@ -25,12 +25,6 @@ function run(ffmpeg, args) {
       else resolve()
     })
   })
-}
-
-async function fetchClip(url, idx) {
-  const resp = await fetch(url)
-  if (!resp.ok) throw new Error(`Scene ${idx + 1} download failed (HTTP ${resp.status})`)
-  return Buffer.from(await resp.arrayBuffer())
 }
 
 export default async function handler(req, res) {
@@ -77,60 +71,61 @@ export default async function handler(req, res) {
     const ffmpeg = await getFFmpeg()
     console.log(`[assemble] start — ${scenes.length} scenes, project ${project_id}`)
 
-    // Pipelined sequential: download clip N+1 while ffmpeg encodes clip N.
-    // One ffmpeg at a time → no CPU contention. Peak disk: 1 original + growing scaled set.
-    let nextFetch = fetchClip(scenes[0].video_url, 0)
+    // Download in batches of 5 (parallel within each batch) and keep all clips on disk.
+    // Then one single FFmpeg pass encodes everything — far fewer process startups,
+    // and batch downloads are ~5x faster than sequential pipelined downloads.
+    const BATCH = 5
+    const batches = Math.ceil(scenes.length / BATCH)
+    let totalDownloadMB = 0
 
-    for (let i = 0; i < scenes.length; i++) {
-      const clipBuf = await nextFetch
-      // Kick off next download immediately so it runs in parallel with encode
-      nextFetch = i + 1 < scenes.length
-        ? fetchClip(scenes[i + 1].video_url, i + 1)
-        : Promise.resolve(null)
+    for (let b = 0; b < batches; b++) {
+      const slice = scenes.slice(b * BATCH, (b + 1) * BATCH)
+      const bufs = await Promise.all(slice.map(async (scene, bi) => {
+        const resp = await fetch(scene.video_url)
+        if (!resp.ok) throw new Error(`Scene ${scene.scene_index + 1} download failed (HTTP ${resp.status})`)
+        return { idx: b * BATCH + bi, buf: Buffer.from(await resp.arrayBuffer()) }
+      }))
+      for (const { idx, buf } of bufs) {
+        await writeFile(join(jobDir, `clip_${idx}.mp4`), buf)
+        totalDownloadMB += buf.length / 1024 / 1024
+      }
+      console.log(`[assemble] batch ${b + 1}/${batches} downloaded — ${totalDownloadMB.toFixed(0)}MB total (${Math.round((Date.now() - t0) / 1000)}s)`)
 
-      const origPath = join(jobDir, `orig_${i}.mp4`)
-      const scaledPath = join(jobDir, `scaled_${i}.mp4`)
-
-      await writeFile(origPath, clipBuf)
-      await run(ffmpeg, [
-        '-loglevel', 'error', '-i', origPath,
-        '-vf', 'scale=720:-2',
-        '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '34',
-        '-maxrate', '1400k', '-bufsize', '2800k', '-an',
-        '-y', scaledPath,
-      ])
-      await unlink(origPath)
-
-      if ((i + 1) % 5 === 0 || i === scenes.length - 1)
-        console.log(`[assemble] ${i + 1}/${scenes.length} clips done (${Math.round((Date.now() - t0) / 1000)}s)`)
+      if (totalDownloadMB > 420) {
+        throw new Error(`Downloads hit ${totalDownloadMB.toFixed(0)}MB — clips are too large for /tmp (each ~${(totalDownloadMB / scenes.length).toFixed(0)}MB). Fal.ai may be delivering very high bitrate source files.`)
+      }
     }
 
-    // Stream-copy concat + audio mux
+    // Single FFmpeg pass: concat demuxer reads clips sequentially, re-encodes to 720p
     const listPath = join(jobDir, 'list.txt')
-    await writeFile(listPath, scenes.map((_, i) => `file '${join(jobDir, `scaled_${i}.mp4`)}'`).join('\n'))
+    await writeFile(listPath, scenes.map((_, i) => `file '${join(jobDir, `clip_${i}.mp4`)}'`).join('\n'))
 
     const outputPath = join(jobDir, 'output.mp4')
-    const concatArgs = [
+    const encodeArgs = [
       '-loglevel', 'error',
       '-f', 'concat', '-safe', '0', '-i', listPath,
     ]
     if (project.audio_url) {
-      concatArgs.push('-i', project.audio_url, '-map', '0:v:0', '-map', '1:a:0')
+      encodeArgs.push('-i', project.audio_url, '-map', '0:v:0', '-map', '1:a:0')
     }
-    concatArgs.push('-c:v', 'copy')
+    encodeArgs.push(
+      '-vf', 'scale=720:-2',
+      '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '34',
+      '-maxrate', '1400k', '-bufsize', '2800k',
+    )
     if (project.audio_url) {
-      concatArgs.push('-c:a', 'aac', '-b:a', '128k', '-shortest')
+      encodeArgs.push('-c:a', 'aac', '-b:a', '128k', '-shortest')
     }
-    concatArgs.push('-y', outputPath)
+    encodeArgs.push('-y', outputPath)
 
-    console.log('[assemble] concat + audio mux')
-    await run(ffmpeg, concatArgs)
-    console.log(`[assemble] encode done (${Math.round((Date.now() - t0) / 1000)}s)`)
+    console.log(`[assemble] single-pass encode start (${Math.round((Date.now() - t0) / 1000)}s elapsed after downloads)`)
+    await run(ffmpeg, encodeArgs)
+    console.log(`[assemble] encode done (${Math.round((Date.now() - t0) / 1000)}s total)`)
 
     const outputBuf = await readFile(outputPath)
     const sizeMB = outputBuf.length / 1024 / 1024
     console.log('[assemble] output:', sizeMB.toFixed(1), 'MB — uploading')
-    if (sizeMB > 45) throw new Error(`Output is ${sizeMB.toFixed(1)} MB — too large for storage (target <45 MB)`)
+    if (sizeMB > 45) throw new Error(`Output is ${sizeMB.toFixed(1)} MB — too large for storage (target <45 MB). Try generating with lower quality or fewer scenes.`)
 
     const storagePath = `${project.user_id}/${project_id}/final.mp4`
     const { error: uploadErr } = await supabase.storage
