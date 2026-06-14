@@ -6,7 +6,8 @@ const lsKey = (id) => `jbt_assembling_${id}`
 const RESUME_WINDOW_MS = 6 * 60 * 1000  // 6 min — Vercel max duration + buffer
 const GIVE_UP_MS = 10 * 60 * 1000       // 10 min — bail and show retry
 
-const estimateSecs = (sceneCount) => Math.max(90, sceneCount * 4)
+// Batched encode: ~8s per batch of 5 clips + 10s overhead
+const estimateSecs = (sceneCount) => Math.max(60, Math.ceil(sceneCount / 5) * 8 + 10)
 
 function fmt(remaining, elapsed, estimated) {
   if (elapsed > estimated * 1.2) return 'still working…'

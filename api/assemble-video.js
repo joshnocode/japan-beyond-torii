@@ -1,7 +1,7 @@
 import { createClient } from '@supabase/supabase-js'
 import { execFile } from 'node:child_process'
 import { join } from 'node:path'
-import { writeFile, readFile, mkdir, rm, chmod, copyFile } from 'node:fs/promises'
+import { writeFile, readFile, mkdir, rm, chmod, copyFile, unlink } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import ffmpegStaticPath from 'ffmpeg-static'
 
@@ -25,23 +25,6 @@ function run(ffmpeg, args) {
       else resolve()
     })
   })
-}
-
-function srtTime(s) {
-  const h = Math.floor(s / 3600)
-  const m = Math.floor((s % 3600) / 60)
-  const sec = Math.floor(s % 60)
-  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')},000`
-}
-
-function buildSRT(scenes, brief) {
-  return scenes.map((scene, i) => {
-    const start = i * 5
-    const end = (i + 1) * 5
-    const raw = brief?.scenes?.[i]?.script_excerpt || scene.description || ''
-    const caption = raw.length > 140 ? raw.slice(0, raw.lastIndexOf(' ', 140)) + '…' : raw
-    return `${i + 1}\n${srtTime(start)} --> ${srtTime(end)}\n${caption}`
-  }).join('\n\n')
 }
 
 export default async function handler(req, res) {
@@ -80,60 +63,84 @@ export default async function handler(req, res) {
   try {
     const t0 = Date.now()
     const ffmpeg = await getFFmpeg()
+    console.log(`[assemble] start — ${scenes.length} scenes, project ${project_id}`)
 
-    // Download all clips + audio in parallel
-    console.log('[assemble] downloading', scenes.length, 'clips + audio in parallel')
+    // Download audio in background so it's ready by the time we need it
     let audioExt = null
     const audioPromise = project.audio_url ? (async () => {
       const resp = await fetch(project.audio_url)
-      if (resp.ok) {
-        audioExt = (project.audio_url.split('.').pop().split('?')[0] || 'mp3').toLowerCase()
-        await writeFile(join(jobDir, `audio.${audioExt}`), Buffer.from(await resp.arrayBuffer()))
-        console.log('[assemble] audio downloaded:', audioExt)
-      }
+      if (!resp.ok) { console.warn('[assemble] audio download failed:', resp.status); return }
+      audioExt = (project.audio_url.split('.').pop().split('?')[0] || 'mp3').toLowerCase()
+      await writeFile(join(jobDir, `audio.${audioExt}`), Buffer.from(await resp.arrayBuffer()))
+      console.log('[assemble] audio ready:', audioExt)
     })() : Promise.resolve()
 
-    await Promise.all([
-      ...scenes.map(async (scene, i) => {
+    // Process clips in batches: download → scale-encode → delete original
+    // This keeps peak /tmp usage at ~(BATCH_SIZE × clip_size) + accumulated scaled clips
+    // rather than all 35 clips at once which can exceed the 512MB /tmp limit.
+    const BATCH_SIZE = 5
+    const batches = Math.ceil(scenes.length / BATCH_SIZE)
+
+    for (let b = 0; b < batches; b++) {
+      const start = b * BATCH_SIZE
+      const end = Math.min(start + BATCH_SIZE, scenes.length)
+      const batch = scenes.slice(start, end)
+
+      // Download batch in parallel
+      await Promise.all(batch.map(async (scene, bi) => {
+        const idx = start + bi
         const resp = await fetch(scene.video_url)
         if (!resp.ok) throw new Error(`Scene ${scene.scene_index + 1} download failed (HTTP ${resp.status})`)
-        await writeFile(join(jobDir, `scene_${i}.mp4`), Buffer.from(await resp.arrayBuffer()))
-      }),
-      audioPromise,
-    ])
-    console.log(`[assemble] all downloads done in ${Math.round((Date.now() - t0) / 1000)}s`)
+        await writeFile(join(jobDir, `orig_${idx}.mp4`), Buffer.from(await resp.arrayBuffer()))
+      }))
 
-    // Write SRT and concat list
-    await writeFile(join(jobDir, 'subs.srt'), buildSRT(scenes, project.brief))
+      // Scale-encode each clip to 720p CRF32, then immediately delete the original.
+      // Running encodes in parallel within the batch is safe since each has its own input/output.
+      await Promise.all(batch.map(async (_, bi) => {
+        const idx = start + bi
+        const src = join(jobDir, `orig_${idx}.mp4`)
+        const dst = join(jobDir, `scaled_${idx}.mp4`)
+        await run(ffmpeg, [
+          '-loglevel', 'error',
+          '-i', src,
+          '-vf', 'scale=720:-2',
+          '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '32',
+          '-maxrate', '1800k', '-bufsize', '3600k',
+          '-an',
+          '-y', dst,
+        ])
+        await unlink(src)
+      }))
+
+      console.log(`[assemble] batch ${b + 1}/${batches} done (${Math.round((Date.now() - t0) / 1000)}s)`)
+    }
+
+    await audioPromise
+
+    // Build concat list of all scaled clips
     const listPath = join(jobDir, 'list.txt')
-    await writeFile(listPath, scenes.map((_, i) => `file '${join(jobDir, `scene_${i}.mp4`)}'`).join('\n'))
+    await writeFile(listPath, scenes.map((_, i) => `file '${join(jobDir, `scaled_${i}.mp4`)}'`).join('\n'))
 
     const outputPath = join(jobDir, 'output.mp4')
 
-    // Use -f concat demuxer so FFmpeg processes clips sequentially.
-    // No subtitle encoding — libass burn-in was ~200s alone, mov_text had compat issues.
-    // Subtitles can be a separate follow-up once core assembly is stable.
-    const args = ['-loglevel', 'error', '-f', 'concat', '-safe', '0', '-i', listPath]
-    if (audioExt) args.push('-i', join(jobDir, `audio.${audioExt}`))
-    if (audioExt) args.push('-map', '0:v:0', '-map', '1:a:0')
-    args.push('-vf', 'scale=720:-2')
-    args.push('-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '32', '-maxrate', '1800k', '-bufsize', '3600k')
-    if (audioExt) args.push('-c:a', 'aac', '-b:a', '128k', '-shortest')
-    args.push('-y', outputPath)
+    // Stream-copy concat: clips are already encoded at matching specs so no re-encode needed.
+    // This step is nearly instant. Audio is muxed in here.
+    const concatArgs = ['-loglevel', 'error', '-f', 'concat', '-safe', '0', '-i', listPath]
+    if (audioExt) concatArgs.push('-i', join(jobDir, `audio.${audioExt}`))
+    if (audioExt) concatArgs.push('-map', '0:v:0', '-map', '1:a:0')
+    concatArgs.push('-c:v', 'copy')
+    if (audioExt) concatArgs.push('-c:a', 'aac', '-b:a', '128k', '-shortest')
+    concatArgs.push('-y', outputPath)
 
-    const tEncode = Date.now()
-    console.log('[assemble] starting ffmpeg encode (no subtitles, concat demuxer)')
-    await run(ffmpeg, args)
-    console.log(`[assemble] encode completed in ${Math.round((Date.now() - tEncode) / 1000)}s`)
-    console.log(`[assemble] encode completed in ${Math.round((Date.now() - tEncode) / 1000)}s`)
+    console.log('[assemble] concat + audio mux')
+    await run(ffmpeg, concatArgs)
+    console.log(`[assemble] encode done (${Math.round((Date.now() - t0) / 1000)}s total)`)
 
-    // Upload to Supabase storage
+    // Upload to Supabase
     const outputBuf = await readFile(outputPath)
     const sizeMB = Math.round(outputBuf.length / 1024 / 1024)
-    console.log('[assemble] output size:', sizeMB, 'MB — uploading')
-    if (sizeMB > 49) {
-      throw new Error(`Output is ${sizeMB} MB — exceeds Supabase 50 MB limit. Contact support to upgrade storage.`)
-    }
+    console.log('[assemble] output:', sizeMB, 'MB — uploading')
+    if (sizeMB > 49) throw new Error(`Output is ${sizeMB} MB — exceeds Supabase 50 MB storage limit`)
 
     const storagePath = `${project.user_id}/${project_id}/final.mp4`
     const { error: uploadErr } = await supabase.storage
@@ -145,12 +152,11 @@ export default async function handler(req, res) {
     const videoUrl = urlData.publicUrl
 
     await supabase.from('projects').update({ video_url: videoUrl, status: 'complete' }).eq('id', project_id)
-    console.log(`[assemble] complete in ${Math.round((Date.now() - t0) / 1000)}s total:`, videoUrl)
+    console.log(`[assemble] complete in ${Math.round((Date.now() - t0) / 1000)}s:`, videoUrl)
 
     return res.status(200).json({ video_url: videoUrl })
   } catch (err) {
-    console.error('[assemble-video] error:', err.message)
-    // Reset status so the UI badge doesn't stay stuck on "ASSEMBLING"
+    console.error('[assemble-video] FAILED:', err.message)
     await supabase.from('projects').update({ status: 'videos_ready' }).eq('id', project_id).catch(() => {})
     return res.status(500).json({ error: err.message || 'Assembly failed' })
   } finally {
