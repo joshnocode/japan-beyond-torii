@@ -1551,6 +1551,20 @@ h1, h2, h3, h4 {
   flex-shrink: 0;
 }
 
+.assembly-error-box {
+  margin-top: 8px;
+  padding: 10px 12px;
+  background: rgba(220, 38, 38, 0.12);
+  border: 1px solid rgba(220, 38, 38, 0.4);
+  border-radius: var(--radius-sm);
+}
+
+.assembly-error-hint {
+  margin-top: 4px;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
 /* Assembly done / final video */
 .assembly-done-panel {
   background: var(--bg-card);

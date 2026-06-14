@@ -123,12 +123,13 @@ export default async function handler(req, res) {
 
     const outputPath = join(jobDir, 'output.mp4')
 
-    // Stream-copy concat: clips are already encoded at matching specs so no re-encode needed.
-    // This step is nearly instant. Audio is muxed in here.
+    // Concat with re-encode (not stream copy) — avoids SPS/PPS header mismatch issues
+    // that can occur when stream-copying separately-encoded H.264 clips.
+    // Clips are already 720p so this second pass is fast (~15-20s for 175s of video).
     const concatArgs = ['-loglevel', 'error', '-f', 'concat', '-safe', '0', '-i', listPath]
     if (audioExt) concatArgs.push('-i', join(jobDir, `audio.${audioExt}`))
     if (audioExt) concatArgs.push('-map', '0:v:0', '-map', '1:a:0')
-    concatArgs.push('-c:v', 'copy')
+    concatArgs.push('-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '32', '-maxrate', '1800k', '-bufsize', '3600k')
     if (audioExt) concatArgs.push('-c:a', 'aac', '-b:a', '128k', '-shortest')
     concatArgs.push('-y', outputPath)
 
