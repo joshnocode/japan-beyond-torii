@@ -10,6 +10,7 @@ create table if not exists public.projects (
   thumbnail_url text,
   video_url text,
   audio_url text,
+  assembly_error text,
   created_at timestamptz default now(),
   updated_at timestamptz default now()
 );
