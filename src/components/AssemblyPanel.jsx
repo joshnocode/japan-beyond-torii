@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { supabase } from '../lib/supabase'
 
 const API_BASE = import.meta.env.DEV ? 'http://localhost:3000' : ''
+const lsKey = (id) => `jbt_assembling_${id}`
 
 export default function AssemblyPanel({ project, scenes, onComplete, onAssemblyStart, autoStart }) {
   const [running, setRunning] = useState(false)
@@ -10,12 +11,19 @@ export default function AssemblyPanel({ project, scenes, onComplete, onAssemblyS
 
   const hasAudio = !!project.audio_url
 
+  // Clear stale localStorage marker if the project already has a video
+  useEffect(() => {
+    if (project.video_url) localStorage.removeItem(lsKey(project.id))
+  }, [project.id, project.video_url])
+
   const startAssembly = async () => {
     if (running) return
     setError('')
     setRunning(true)
 
-    // Persist status immediately so a refresh shows the interrupted banner
+    // Write synchronously BEFORE any async work — survives refresh even if Supabase is slow
+    localStorage.setItem(lsKey(project.id), Date.now().toString())
+
     await supabase.from('projects').update({ status: 'assembling' }).eq('id', project.id)
     onAssemblyStart?.()
 
@@ -36,18 +44,24 @@ export default function AssemblyPanel({ project, scenes, onComplete, onAssemblyS
       }
 
       const { video_url } = await res.json()
+      localStorage.removeItem(lsKey(project.id))
       setVideoUrl(video_url)
       onComplete?.(video_url)
     } catch (err) {
       setError(err.message || 'Assembly failed')
+      // Keep localStorage so the next page load knows to retry
     } finally {
       setRunning(false)
     }
   }
 
-  // Auto-resume when page is reloaded mid-assembly (DB status = assembling)
+  // Auto-resume on mount: triggered by DB status (autoStart) OR localStorage marker
   useEffect(() => {
-    if (autoStart && !videoUrl) startAssembly()
+    if (videoUrl) return
+    const ts = localStorage.getItem(lsKey(project.id))
+    // Retry if DB says assembling OR if localStorage was set within the last 10 min
+    const recentAttempt = ts && Date.now() - parseInt(ts) < 10 * 60 * 1000
+    if (autoStart || recentAttempt) startAssembly()
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   if (videoUrl) {
