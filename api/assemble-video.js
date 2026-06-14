@@ -7,7 +7,6 @@ import ffmpegStaticPath from 'ffmpeg-static'
 
 export const maxDuration = 300
 
-// Copy ffmpeg binary to /tmp so we can chmod it — Lambda's /var/task is read-only
 async function getFFmpeg() {
   const dest = join(tmpdir(), 'ffmpeg_bin')
   try {
@@ -75,8 +74,7 @@ export default async function handler(req, res) {
   const missing = (scenes || []).filter(s => !s.video_url)
   if (missing.length) return res.status(400).json({ error: `${missing.length} scenes are missing video` })
 
-  // Validate all video URLs are reachable before starting FFmpeg
-  // (Fal.ai CDN URLs can expire — better to catch it here than get a cryptic FFmpeg error)
+  // Validate all video URLs before starting any heavy work
   const urlChecks = await Promise.all(
     (scenes || []).map(async (scene) => {
       try {
@@ -90,7 +88,7 @@ export default async function handler(req, res) {
   const badUrls = urlChecks.filter(c => !c.ok)
   if (badUrls.length) {
     return res.status(400).json({
-      error: `${badUrls.length} video URL(s) are inaccessible (scenes: ${badUrls.map(c => `${c.idx} [${c.status}]`).join(', ')}). Re-generate those scenes and retry.`
+      error: `${badUrls.length} video URL(s) inaccessible (scenes: ${badUrls.map(c => `${c.idx} [${c.status}]`).join(', ')}). Re-generate those scenes and retry.`
     })
   }
 
@@ -100,14 +98,18 @@ export default async function handler(req, res) {
   try {
     const ffmpeg = await getFFmpeg()
 
-    // Write concat.txt with video URLs — FFmpeg streams them directly, no local downloads needed
-    await writeFile(
-      join(jobDir, 'concat.txt'),
-      scenes.map(scene => `file '${scene.video_url}'`).join('\n')
-    )
+    // Download all clips in parallel — fast, avoids sequential HTTP in FFmpeg
+    console.log('[assemble] downloading', scenes.length, 'clips in parallel')
+    await Promise.all(scenes.map(async (scene, i) => {
+      const resp = await fetch(scene.video_url)
+      if (!resp.ok) throw new Error(`Scene ${scene.scene_index + 1} download failed (HTTP ${resp.status})`)
+      await writeFile(join(jobDir, `scene_${i}.mp4`), Buffer.from(await resp.arrayBuffer()))
+    }))
+    console.log('[assemble] all clips downloaded')
+
     await writeFile(join(jobDir, 'subs.srt'), buildSRT(scenes, project.brief))
 
-    // Audio only needs to be on disk (it's small)
+    // Download audio
     let audioExt = null
     if (project.audio_url) {
       const resp = await fetch(project.audio_url)
@@ -117,40 +119,39 @@ export default async function handler(req, res) {
       }
     }
 
-    // Single-pass: concat (streaming from URLs) + scale to 720p + subtitles + encode
-    // No intermediate merged.mp4 — peak /tmp usage is just output.mp4 (~40MB) + ffmpeg binary
+    // Build filter_complex: concat all clips → scale to 720p → subtitles
+    // Using filter_complex avoids writing an intermediate merged.mp4 (saves ~300MB of /tmp)
+    // Peak disk: clips (~256MB) + output.mp4 (~40MB) — well within the 512MB Lambda limit
+    const n = scenes.length
     const srtPath = join(jobDir, 'subs.srt')
     const outputPath = join(jobDir, 'output.mp4')
-    const scaleFilter = 'scale=720:-2'
-    const subFilter = `${scaleFilter},subtitles=${srtPath}:force_style='FontSize=18,PrimaryColour=&HFFFFFF&,OutlineColour=&H00000000,Outline=2,BorderStyle=1,Alignment=2,MarginV=40'`
 
-    const baseArgs = [
-      '-loglevel', 'error',
-      '-protocol_whitelist', 'file,http,https,tcp,tls,crypto',
-      '-f', 'concat', '-safe', '0',
-      '-i', join(jobDir, 'concat.txt'),
-    ]
+    const concatInputs = Array.from({ length: n }, (_, i) => `[${i}:v]`).join('')
+    const filterWithSubs = `${concatInputs}concat=n=${n}:v=1:a=0[cv];[cv]scale=720:-2[sv];[sv]subtitles=${srtPath}:force_style='FontSize=18,PrimaryColour=&HFFFFFF&,OutlineColour=&H00000000,Outline=2,BorderStyle=1,Alignment=2,MarginV=40'[outv]`
+    const filterNoSubs = `${concatInputs}concat=n=${n}:v=1:a=0[cv];[cv]scale=720:-2[outv]`
 
-    const encodeArgs = [...baseArgs]
-    if (audioExt) encodeArgs.push('-i', join(jobDir, `audio.${audioExt}`), '-map', '0:v:0', '-map', '1:a:0')
-    encodeArgs.push('-vf', subFilter, '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '28')
-    if (audioExt) encodeArgs.push('-c:a', 'aac', '-b:a', '128k', '-shortest')
-    encodeArgs.push('-y', outputPath)
-
-    try {
-      await run(ffmpeg, encodeArgs)
-    } catch (subErr) {
-      // Fallback: encode without subtitle filter (libass may be unavailable)
-      const noSubArgs = [...baseArgs]
-      if (audioExt) noSubArgs.push('-i', join(jobDir, `audio.${audioExt}`), '-map', '0:v:0', '-map', '1:a:0')
-      noSubArgs.push('-vf', scaleFilter, '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '28')
-      if (audioExt) noSubArgs.push('-c:a', 'aac', '-b:a', '128k', '-shortest')
-      noSubArgs.push('-y', outputPath)
-      await run(ffmpeg, noSubArgs)
+    const buildArgs = (filterComplex) => {
+      const args = ['-loglevel', 'error']
+      scenes.forEach((_, i) => args.push('-i', join(jobDir, `scene_${i}.mp4`)))
+      if (audioExt) args.push('-i', join(jobDir, `audio.${audioExt}`))
+      args.push('-filter_complex', filterComplex, '-map', '[outv]')
+      if (audioExt) args.push('-map', `${n}:a:0`, '-c:a', 'aac', '-b:a', '128k', '-shortest')
+      args.push('-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '28', '-y', outputPath)
+      return args
     }
+
+    console.log('[assemble] starting ffmpeg encode')
+    try {
+      await run(ffmpeg, buildArgs(filterWithSubs))
+    } catch (subErr) {
+      console.log('[assemble] subtitle encode failed, retrying without subs:', subErr.message.slice(0, 200))
+      await run(ffmpeg, buildArgs(filterNoSubs))
+    }
+    console.log('[assemble] encode done, uploading')
 
     // Upload to Supabase
     const outputBuf = await readFile(outputPath)
+    console.log('[assemble] output size:', Math.round(outputBuf.length / 1024 / 1024), 'MB')
     const storagePath = `${project.user_id}/${project_id}/final.mp4`
     const { error: uploadErr } = await supabase.storage
       .from('project-assets')
@@ -161,6 +162,7 @@ export default async function handler(req, res) {
     const videoUrl = urlData.publicUrl
 
     await supabase.from('projects').update({ video_url: videoUrl, status: 'complete' }).eq('id', project_id)
+    console.log('[assemble] done:', videoUrl)
 
     return res.status(200).json({ video_url: videoUrl })
   } catch (err) {
