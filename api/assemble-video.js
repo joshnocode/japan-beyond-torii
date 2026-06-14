@@ -75,14 +75,32 @@ export default async function handler(req, res) {
   const missing = (scenes || []).filter(s => !s.video_url)
   if (missing.length) return res.status(400).json({ error: `${missing.length} scenes are missing video` })
 
+  // Validate all video URLs are reachable before starting FFmpeg
+  // (Fal.ai CDN URLs can expire — better to catch it here than get a cryptic FFmpeg error)
+  const urlChecks = await Promise.all(
+    (scenes || []).map(async (scene) => {
+      try {
+        const r = await fetch(scene.video_url, { method: 'HEAD' })
+        return { idx: scene.scene_index + 1, ok: r.ok, status: r.status }
+      } catch (e) {
+        return { idx: scene.scene_index + 1, ok: false, status: e.message }
+      }
+    })
+  )
+  const badUrls = urlChecks.filter(c => !c.ok)
+  if (badUrls.length) {
+    return res.status(400).json({
+      error: `${badUrls.length} video URL(s) are inaccessible (scenes: ${badUrls.map(c => `${c.idx} [${c.status}]`).join(', ')}). Re-generate those scenes and retry.`
+    })
+  }
+
   const jobDir = join(tmpdir(), `assembly_${Date.now()}`)
   await mkdir(jobDir, { recursive: true })
 
   try {
     const ffmpeg = await getFFmpeg()
 
-    // Write concat.txt with Supabase URLs directly — FFmpeg streams them, no local downloads needed
-    // This avoids downloading ~300MB of clips to /tmp before encoding
+    // Write concat.txt with video URLs — FFmpeg streams them directly, no local downloads needed
     await writeFile(
       join(jobDir, 'concat.txt'),
       scenes.map(scene => `file '${scene.video_url}'`).join('\n')

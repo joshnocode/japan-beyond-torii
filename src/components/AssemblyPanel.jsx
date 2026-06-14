@@ -19,6 +19,7 @@ export default function AssemblyPanel({ project, scenes, onComplete, onAssemblyS
   const [videoUrl, setVideoUrl] = useState(project.video_url || null)
   const [elapsed, setElapsed] = useState(0)
   const startRef = useRef(null)
+  const pollStopRef = useRef(false)
 
   const hasAudio = !!project.audio_url
   const estimated = estimateSecs(scenes.length)
@@ -40,16 +41,42 @@ export default function AssemblyPanel({ project, scenes, onComplete, onAssemblyS
     if (project.video_url) localStorage.removeItem(lsKey(project.id))
   }, [project.id, project.video_url])
 
+  const handleDone = (url) => {
+    localStorage.removeItem(lsKey(project.id))
+    setVideoUrl(url)
+    onComplete?.(url)
+  }
+
   const startAssembly = async () => {
     if (running) return
     setError('')
     setRunning(true)
+    pollStopRef.current = false
 
-    // Write synchronously BEFORE any async work — survives refresh even if Supabase is slow
+    // Synchronous write — survives page refresh even if Supabase update is slow
     localStorage.setItem(lsKey(project.id), Date.now().toString())
 
     await supabase.from('projects').update({ status: 'assembling' }).eq('id', project.id)
     onAssemblyStart?.()
+
+    // Poll Supabase in parallel every 10s — catches completion even if fetch connection drops
+    // (common on mobile when screen locks or browser backgrounds during a long request)
+    const pollLoop = async () => {
+      while (!pollStopRef.current) {
+        await new Promise(r => setTimeout(r, 10000))
+        if (pollStopRef.current) break
+        const { data: proj } = await supabase
+          .from('projects').select('status, video_url').eq('id', project.id).single()
+        if (proj?.video_url) {
+          pollStopRef.current = true
+          handleDone(proj.video_url)
+          setRunning(false)
+          return
+        }
+        if (proj?.status !== 'assembling') break
+      }
+    }
+    pollLoop() // fire-and-forget
 
     try {
       const { data: { session } } = await supabase.auth.getSession()
@@ -62,17 +89,36 @@ export default function AssemblyPanel({ project, scenes, onComplete, onAssemblyS
         body: JSON.stringify({ project_id: project.id }),
       })
 
+      pollStopRef.current = true
+
       if (!res.ok) {
         const body = await res.json().catch(() => ({}))
         throw new Error(body.error || `Server error ${res.status}`)
       }
 
       const { video_url } = await res.json()
-      localStorage.removeItem(lsKey(project.id))
-      setVideoUrl(video_url)
-      onComplete?.(video_url)
+      handleDone(video_url)
     } catch (err) {
-      setError(err.message || 'Assembly failed')
+      pollStopRef.current = true
+      const msg = err.message || 'Assembly failed'
+
+      // Network-level failure: fetch never got a response (mobile backgrounded, timeout, crash)
+      if (msg === 'Load failed' || msg === 'Failed to fetch' || msg.includes('NetworkError')) {
+        // Check if the assembly actually finished despite the dropped connection
+        const { data: proj } = await supabase
+          .from('projects').select('status, video_url').eq('id', project.id).single()
+        if (proj?.video_url) {
+          handleDone(proj.video_url)
+          return
+        }
+        setError(
+          proj?.status === 'assembling'
+            ? 'Connection dropped while assembly was running. It may still complete — refresh in a minute to check, or tap "Assemble →" to retry.'
+            : `Connection lost (${msg}). Tap "Assemble →" to retry.`
+        )
+      } else {
+        setError(msg)
+      }
     } finally {
       setRunning(false)
     }
