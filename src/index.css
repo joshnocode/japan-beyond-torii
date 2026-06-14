@@ -1402,12 +1402,44 @@ h1, h2, h3, h4 {
 
 .assembly-cloud-progress {
   display: flex;
-  align-items: center;
-  gap: 1rem;
+  flex-direction: column;
+  gap: 0.6rem;
   padding: 1rem;
   background: rgba(255,255,255,0.04);
   border-radius: 8px;
   margin-top: 0.75rem;
+}
+
+.assembly-progress-top {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.assembly-eta {
+  font-size: 0.85rem;
+  color: var(--gold);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.assembly-progress-bar-wrap {
+  height: 4px;
+  background: rgba(255,255,255,0.1);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.assembly-progress-bar {
+  height: 100%;
+  background: var(--gold);
+  border-radius: 2px;
+  transition: width 1s linear;
+}
+
+.assembly-progress-label {
+  font-size: 0.75rem;
+  color: var(--text-muted);
 }
 
 .assembly-warning {
