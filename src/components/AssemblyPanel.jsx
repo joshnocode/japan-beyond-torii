@@ -125,6 +125,9 @@ export default function AssemblyPanel({ project, scenes, onComplete, onAssemblyS
     localStorage.setItem(lsKey(project.id), now.toString())
     startRef.current = now
 
+    // Reset any stuck 'assembling' state (e.g. Lambda was hard-killed, catch never ran)
+    await supabase.from('projects').update({ status: 'videos_ready' }).eq('id', project.id).catch(() => {})
+
     try {
       const { data: { session } } = await supabase.auth.getSession()
       const res = await fetch(`${API_BASE}/api/assemble-video`, {

@@ -57,11 +57,6 @@ export default async function handler(req, res) {
   const missing = (scenes || []).filter(s => !s.video_url)
   if (missing.length) return res.status(400).json({ error: `${missing.length} scenes are missing video` })
 
-  // Guard against duplicate jobs — if already assembling, just tell the client to poll
-  if (project.status === 'assembling' && !project.video_url) {
-    return res.status(202).json({ status: 'assembling', alreadyRunning: true })
-  }
-
   // Mark assembling in DB, then respond immediately so the client can disconnect.
   // Assembly continues running in the Vercel background up to maxDuration.
   // The frontend polls Supabase for completion — no need to stay on the page.
