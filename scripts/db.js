@@ -4,14 +4,13 @@
 //   node scripts/db.js projects
 //   node scripts/db.js scenes <project_id>
 
-import pg from 'pg'
+import { createClient } from '@supabase/supabase-js'
 import { readFileSync } from 'node:fs'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 
-// Load .env from project root
 try {
   const env = readFileSync(join(__dirname, '../.env'), 'utf8')
   for (const line of env.split('\n')) {
@@ -20,57 +19,46 @@ try {
   }
 } catch {}
 
-const connStr = process.env.DATABASE_URL
-if (!connStr) {
-  console.error('Missing DATABASE_URL in .env')
-  console.error('Add: DATABASE_URL=postgresql://postgres:[password]@db.hdjmcjgpqmltrwiwltnr.supabase.co:5432/postgres')
+const url = process.env.VITE_SUPABASE_URL
+const key = process.env.VITE_SUPABASE_ANON_KEY
+
+if (!url || !key) {
+  console.error('Missing VITE_SUPABASE_URL or VITE_SUPABASE_ANON_KEY in .env')
   process.exit(1)
 }
 
-const client = new pg.Client({ connectionString: connStr, ssl: { rejectUnauthorized: false } })
-await client.connect()
-
+const sb = createClient(url, key)
 const [,, cmd, arg] = process.argv
 
 async function project(id) {
-  const { rows } = await client.query(
-    'SELECT id, title, status, video_url, audio_url, user_id, created_at FROM projects WHERE id = $1',
-    [id]
-  )
-  if (!rows.length) return console.log('Project not found:', id)
-  const d = rows[0]
+  const { data, error } = await sb.from('projects').select('*').eq('id', id).single()
+  if (error) return console.error('Error:', error.message)
   console.log('\n── Project ──────────────────────────')
-  console.log('id:        ', d.id)
-  console.log('title:     ', d.title)
-  console.log('status:    ', d.status)
-  console.log('video_url: ', d.video_url || '(none)')
-  console.log('audio_url: ', d.audio_url ? '✓ set' : '(none)')
-  console.log('user_id:   ', d.user_id)
-  console.log('created:   ', d.created_at)
+  console.log('id:        ', data.id)
+  console.log('title:     ', data.title)
+  console.log('status:    ', data.status)
+  console.log('video_url: ', data.video_url || '(none)')
+  console.log('audio_url: ', data.audio_url ? '✓ set' : '(none)')
+  console.log('created:   ', data.created_at)
 }
 
 async function projects() {
-  const { rows } = await client.query(
-    `SELECT id, title, status, video_url, created_at
-     FROM projects ORDER BY created_at DESC LIMIT 20`
-  )
+  const { data, error } = await sb.from('projects').select('id,title,status,video_url,created_at').order('created_at', { ascending: false }).limit(20)
+  if (error) return console.error('Error:', error.message)
   console.log('\n── Recent Projects ──────────────────')
-  for (const p of rows) {
+  for (const p of data) {
     const vid = p.video_url ? '✓ video' : '       '
-    console.log(`[${p.status.padEnd(16)}] ${vid}  ${p.id}  ${(p.title || '(untitled)').slice(0, 40)}`)
+    console.log(`[${(p.status || '').padEnd(16)}] ${vid}  ${p.id}  ${(p.title || '(untitled)').slice(0, 40)}`)
   }
 }
 
 async function scenes(projectId) {
-  const { rows } = await client.query(
-    `SELECT scene_index, status, image_url, video_url, video_request_id
-     FROM scenes WHERE project_id = $1 ORDER BY scene_index`,
-    [projectId]
-  )
-  if (!rows.length) return console.log('No scenes found for project:', projectId)
+  const { data, error } = await sb.from('scenes').select('scene_index,status,image_url,video_url,video_request_id').eq('project_id', projectId).order('scene_index')
+  if (error) return console.error('Error:', error.message)
+  if (!data.length) return console.log('No scenes found for project:', projectId)
   console.log(`\n── Scenes for ${projectId} ──`)
   let imgDone = 0, vidDone = 0, errors = 0
-  for (const s of rows) {
+  for (const s of data) {
     const img = s.image_url ? '✓img' : '    '
     const vid = s.video_url ? '✓vid' : '    '
     const req = s.video_request_id ? `queued(${s.video_request_id.slice(0, 8)})` : ''
@@ -80,7 +68,7 @@ async function scenes(projectId) {
     if (s.video_url) vidDone++
     if (s.status === 'error') errors++
   }
-  console.log(`\n  Total: ${rows.length} scenes | ${imgDone} images | ${vidDone} videos | ${errors} errors`)
+  console.log(`\n  Total: ${data.length} scenes | ${imgDone} images | ${vidDone} videos | ${errors} errors`)
 }
 
 switch (cmd) {
@@ -93,5 +81,3 @@ switch (cmd) {
     console.log('  node scripts/db.js project <id>')
     console.log('  node scripts/db.js scenes <id>')
 }
-
-await client.end()
