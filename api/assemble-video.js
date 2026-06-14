@@ -1,7 +1,7 @@
 import { createClient } from '@supabase/supabase-js'
 import { execFile } from 'node:child_process'
 import { join } from 'node:path'
-import { writeFile, readFile, mkdir, rm, chmod, copyFile } from 'node:fs/promises'
+import { writeFile, readFile, mkdir, rm, chmod, copyFile, unlink } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import ffmpegStaticPath from 'ffmpeg-static'
 
@@ -25,6 +25,12 @@ function run(ffmpeg, args) {
       else resolve()
     })
   })
+}
+
+async function fetchClip(url, idx) {
+  const resp = await fetch(url)
+  if (!resp.ok) throw new Error(`Scene ${idx + 1} download failed (HTTP ${resp.status})`)
+  return Buffer.from(await resp.arrayBuffer())
 }
 
 export default async function handler(req, res) {
@@ -57,9 +63,7 @@ export default async function handler(req, res) {
   const missing = (scenes || []).filter(s => !s.video_url)
   if (missing.length) return res.status(400).json({ error: `${missing.length} scenes are missing video` })
 
-  // Respond 202 immediately so the client can disconnect.
-  // Assembly runs in Vercel background up to maxDuration.
-  // Frontend polls Supabase for completion.
+  // Respond 202 immediately — assembly runs in Vercel background, client polls Supabase.
   await supabase.from('projects').update({ status: 'assembling', assembly_error: null }).eq('id', project_id)
   res.status(202).json({ status: 'assembling' })
 
@@ -73,29 +77,35 @@ export default async function handler(req, res) {
     const ffmpeg = await getFFmpeg()
     console.log(`[assemble] start — ${scenes.length} scenes, project ${project_id}`)
 
-    // FFmpeg downloads each clip directly from its URL and encodes in one pass —
-    // no intermediate file write, no separate download step. 5 clips in parallel per batch.
-    const BATCH_SIZE = 5
-    const batches = Math.ceil(scenes.length / BATCH_SIZE)
+    // Pipelined sequential: download clip N+1 while ffmpeg encodes clip N.
+    // One ffmpeg at a time → no CPU contention. Peak disk: 1 original + growing scaled set.
+    let nextFetch = fetchClip(scenes[0].video_url, 0)
 
-    for (let b = 0; b < batches; b++) {
-      const start = b * BATCH_SIZE
-      const end = Math.min(start + BATCH_SIZE, scenes.length)
-      await Promise.all(scenes.slice(start, end).map(async (scene, bi) => {
-        const idx = start + bi
-        await run(ffmpeg, [
-          '-loglevel', 'error',
-          '-i', scene.video_url,
-          '-vf', 'scale=720:-2',
-          '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '34',
-          '-maxrate', '1400k', '-bufsize', '2800k', '-an',
-          '-y', join(jobDir, `scaled_${idx}.mp4`),
-        ])
-      }))
-      console.log(`[assemble] batch ${b + 1}/${batches} done (${Math.round((Date.now() - t0) / 1000)}s)`)
+    for (let i = 0; i < scenes.length; i++) {
+      const clipBuf = await nextFetch
+      // Kick off next download immediately so it runs in parallel with encode
+      nextFetch = i + 1 < scenes.length
+        ? fetchClip(scenes[i + 1].video_url, i + 1)
+        : Promise.resolve(null)
+
+      const origPath = join(jobDir, `orig_${i}.mp4`)
+      const scaledPath = join(jobDir, `scaled_${i}.mp4`)
+
+      await writeFile(origPath, clipBuf)
+      await run(ffmpeg, [
+        '-loglevel', 'error', '-i', origPath,
+        '-vf', 'scale=720:-2',
+        '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '34',
+        '-maxrate', '1400k', '-bufsize', '2800k', '-an',
+        '-y', scaledPath,
+      ])
+      await unlink(origPath)
+
+      if ((i + 1) % 5 === 0 || i === scenes.length - 1)
+        console.log(`[assemble] ${i + 1}/${scenes.length} clips done (${Math.round((Date.now() - t0) / 1000)}s)`)
     }
 
-    // Stream-copy concat + audio mux (ffmpeg reads audio directly from URL)
+    // Stream-copy concat + audio mux
     const listPath = join(jobDir, 'list.txt')
     await writeFile(listPath, scenes.map((_, i) => `file '${join(jobDir, `scaled_${i}.mp4`)}'`).join('\n'))
 
@@ -129,10 +139,8 @@ export default async function handler(req, res) {
     if (uploadErr) throw new Error(`Upload failed: ${uploadErr.message}`)
 
     const { data: urlData } = supabase.storage.from('project-assets').getPublicUrl(storagePath)
-    const videoUrl = urlData.publicUrl
-
-    await supabase.from('projects').update({ video_url: videoUrl, status: 'complete' }).eq('id', project_id)
-    console.log(`[assemble] complete in ${Math.round((Date.now() - t0) / 1000)}s:`, videoUrl)
+    await supabase.from('projects').update({ video_url: urlData.publicUrl, status: 'complete' }).eq('id', project_id)
+    console.log(`[assemble] complete in ${Math.round((Date.now() - t0) / 1000)}s:`, urlData.publicUrl)
   } catch (err) {
     console.error('[assemble-video] FAILED:', err.message)
     await supabase.from('projects')
