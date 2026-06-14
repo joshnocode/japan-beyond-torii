@@ -15,7 +15,6 @@ async function getFFmpeg() {
     await chmod(dest, 0o755)
     return dest
   } catch {
-    // If copy fails fall back to original path (may already be executable)
     return ffmpegStaticPath
   }
 }
@@ -82,21 +81,15 @@ export default async function handler(req, res) {
   try {
     const ffmpeg = await getFFmpeg()
 
-    // Download all clips in parallel
-    await Promise.all(scenes.map(async (scene, i) => {
-      const resp = await fetch(scene.video_url)
-      if (!resp.ok) throw new Error(`Scene ${scene.scene_index + 1} download failed (HTTP ${resp.status})`)
-      await writeFile(join(jobDir, `scene_${i}.mp4`), Buffer.from(await resp.arrayBuffer()))
-    }))
-
-    // Concat list + SRT
+    // Write concat.txt with Supabase URLs directly — FFmpeg streams them, no local downloads needed
+    // This avoids downloading ~300MB of clips to /tmp before encoding
     await writeFile(
       join(jobDir, 'concat.txt'),
-      scenes.map((_, i) => `file '${join(jobDir, `scene_${i}.mp4`)}'`).join('\n')
+      scenes.map(scene => `file '${scene.video_url}'`).join('\n')
     )
     await writeFile(join(jobDir, 'subs.srt'), buildSRT(scenes, project.brief))
 
-    // Audio
+    // Audio only needs to be on disk (it's small)
     let audioExt = null
     if (project.audio_url) {
       const resp = await fetch(project.audio_url)
@@ -106,28 +99,21 @@ export default async function handler(req, res) {
       }
     }
 
-    // Step 1: stream-copy concat
-    await run(ffmpeg, [
-      '-loglevel', 'error',
-      '-f', 'concat', '-safe', '0',
-      '-i', join(jobDir, 'concat.txt'),
-      '-c', 'copy',
-      join(jobDir, 'merged.mp4'),
-    ])
-
-    // Free /tmp space before encoding — all scene clips are now inside merged.mp4
-    await Promise.all(scenes.map((_, i) =>
-      rm(join(jobDir, `scene_${i}.mp4`), { force: true }).catch(() => {})
-    ))
-
-    // Step 2: encode — ultrafast preset to stay within timeout
+    // Single-pass: concat (streaming from URLs) + scale to 720p + subtitles + encode
+    // No intermediate merged.mp4 — peak /tmp usage is just output.mp4 (~40MB) + ffmpeg binary
     const srtPath = join(jobDir, 'subs.srt')
     const outputPath = join(jobDir, 'output.mp4')
-    // scale=720:-2 caps width at 720px (portrait 9:16 → 720x1280), keeps file under 50MB
     const scaleFilter = 'scale=720:-2'
     const subFilter = `${scaleFilter},subtitles=${srtPath}:force_style='FontSize=18,PrimaryColour=&HFFFFFF&,OutlineColour=&H00000000,Outline=2,BorderStyle=1,Alignment=2,MarginV=40'`
 
-    const encodeArgs = ['-loglevel', 'error', '-i', join(jobDir, 'merged.mp4')]
+    const baseArgs = [
+      '-loglevel', 'error',
+      '-protocol_whitelist', 'file,http,https,tcp,tls,crypto',
+      '-f', 'concat', '-safe', '0',
+      '-i', join(jobDir, 'concat.txt'),
+    ]
+
+    const encodeArgs = [...baseArgs]
     if (audioExt) encodeArgs.push('-i', join(jobDir, `audio.${audioExt}`), '-map', '0:v:0', '-map', '1:a:0')
     encodeArgs.push('-vf', subFilter, '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '28')
     if (audioExt) encodeArgs.push('-c:a', 'aac', '-b:a', '128k', '-shortest')
@@ -137,7 +123,7 @@ export default async function handler(req, res) {
       await run(ffmpeg, encodeArgs)
     } catch (subErr) {
       // Fallback: encode without subtitle filter (libass may be unavailable)
-      const noSubArgs = ['-loglevel', 'error', '-i', join(jobDir, 'merged.mp4')]
+      const noSubArgs = [...baseArgs]
       if (audioExt) noSubArgs.push('-i', join(jobDir, `audio.${audioExt}`), '-map', '0:v:0', '-map', '1:a:0')
       noSubArgs.push('-vf', scaleFilter, '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '28')
       if (audioExt) noSubArgs.push('-c:a', 'aac', '-b:a', '128k', '-shortest')
