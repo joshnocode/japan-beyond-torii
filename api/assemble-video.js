@@ -112,8 +112,8 @@ export default async function handler(req, res) {
         await run(ffmpeg, [
           '-loglevel', 'error', '-i', src,
           '-vf', 'scale=720:-2',
-          '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '32',
-          '-maxrate', '1800k', '-bufsize', '3600k', '-an',
+          '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '34',
+          '-maxrate', '1400k', '-bufsize', '2800k', '-an',
           '-y', dst,
         ])
         await unlink(src)
@@ -148,9 +148,9 @@ export default async function handler(req, res) {
     console.log(`[assemble] encode done (${Math.round((Date.now() - t0) / 1000)}s)`)
 
     const outputBuf = await readFile(outputPath)
-    const sizeMB = Math.round(outputBuf.length / 1024 / 1024)
-    console.log('[assemble] output:', sizeMB, 'MB — uploading')
-    if (sizeMB > 49) throw new Error(`Output is ${sizeMB} MB — exceeds Supabase 50 MB storage limit`)
+    const sizeMB = outputBuf.length / 1024 / 1024
+    console.log('[assemble] output:', sizeMB.toFixed(1), 'MB — uploading')
+    if (sizeMB > 45) throw new Error(`Output is ${sizeMB.toFixed(1)} MB — too large for storage (target <45 MB)`)
 
     const storagePath = `${project.user_id}/${project_id}/final.mp4`
     const { error: uploadErr } = await supabase.storage
