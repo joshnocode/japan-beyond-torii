@@ -1,7 +1,7 @@
 import { createClient } from '@supabase/supabase-js'
 import { execFile } from 'node:child_process'
 import { join } from 'node:path'
-import { writeFile, readFile, mkdir, rm, chmod, copyFile, unlink } from 'node:fs/promises'
+import { writeFile, readFile, mkdir, rm, chmod, copyFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import ffmpegStaticPath from 'ffmpeg-static'
 
@@ -57,10 +57,10 @@ export default async function handler(req, res) {
   const missing = (scenes || []).filter(s => !s.video_url)
   if (missing.length) return res.status(400).json({ error: `${missing.length} scenes are missing video` })
 
-  // Mark assembling in DB, then respond immediately so the client can disconnect.
-  // Assembly continues running in the Vercel background up to maxDuration.
-  // The frontend polls Supabase for completion — no need to stay on the page.
-  await supabase.from('projects').update({ status: 'assembling' }).eq('id', project_id)
+  // Respond 202 immediately so the client can disconnect.
+  // Assembly runs in Vercel background up to maxDuration.
+  // Frontend polls Supabase for completion.
+  await supabase.from('projects').update({ status: 'assembling', assembly_error: null }).eq('id', project_id)
   res.status(202).json({ status: 'assembling' })
 
   // ─── Everything below runs after the client has received the response ───
@@ -73,69 +73,44 @@ export default async function handler(req, res) {
     const ffmpeg = await getFFmpeg()
     console.log(`[assemble] start — ${scenes.length} scenes, project ${project_id}`)
 
-    // Download audio in background while processing video clips
-    let audioExt = null
-    const audioPromise = project.audio_url ? (async () => {
-      const resp = await fetch(project.audio_url)
-      if (!resp.ok) { console.warn('[assemble] audio download failed:', resp.status); return }
-      audioExt = (project.audio_url.split('.').pop().split('?')[0] || 'mp3').toLowerCase()
-      await writeFile(join(jobDir, `audio.${audioExt}`), Buffer.from(await resp.arrayBuffer()))
-      console.log('[assemble] audio ready:', audioExt)
-    })() : Promise.resolve()
-
+    // FFmpeg downloads each clip directly from its URL and encodes in one pass —
+    // no intermediate file write, no separate download step. 5 clips in parallel per batch.
     const BATCH_SIZE = 5
     const batches = Math.ceil(scenes.length / BATCH_SIZE)
 
-    const downloadBatch = async (b) => {
+    for (let b = 0; b < batches; b++) {
       const start = b * BATCH_SIZE
       const end = Math.min(start + BATCH_SIZE, scenes.length)
       await Promise.all(scenes.slice(start, end).map(async (scene, bi) => {
         const idx = start + bi
-        const resp = await fetch(scene.video_url)
-        if (!resp.ok) throw new Error(`Scene ${scene.scene_index + 1} download failed (HTTP ${resp.status})`)
-        await writeFile(join(jobDir, `orig_${idx}.mp4`), Buffer.from(await resp.arrayBuffer()))
-      }))
-    }
-
-    const encodeBatch = async (b) => {
-      const start = b * BATCH_SIZE
-      const end = Math.min(start + BATCH_SIZE, scenes.length)
-      await Promise.all(scenes.slice(start, end).map(async (_, bi) => {
-        const idx = start + bi
-        const src = join(jobDir, `orig_${idx}.mp4`)
-        const dst = join(jobDir, `scaled_${idx}.mp4`)
         await run(ffmpeg, [
-          '-loglevel', 'error', '-i', src,
+          '-loglevel', 'error',
+          '-i', scene.video_url,
           '-vf', 'scale=720:-2',
           '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '34',
           '-maxrate', '1400k', '-bufsize', '2800k', '-an',
-          '-y', dst,
+          '-y', join(jobDir, `scaled_${idx}.mp4`),
         ])
-        await unlink(src)
       }))
-      console.log(`[assemble] batch ${b + 1}/${batches} encoded (${Math.round((Date.now() - t0) / 1000)}s)`)
+      console.log(`[assemble] batch ${b + 1}/${batches} done (${Math.round((Date.now() - t0) / 1000)}s)`)
     }
 
-    // Pipeline: download batch b+1 while encoding batch b
-    let dlPromise = downloadBatch(0)
-    for (let b = 0; b < batches; b++) {
-      await dlPromise
-      dlPromise = (b + 1 < batches) ? downloadBatch(b + 1) : Promise.resolve()
-      await encodeBatch(b)
-    }
-    await dlPromise
-    await audioPromise
-
-    // Stream-copy concat (clips already encoded at identical settings — SPS/PPS match)
+    // Stream-copy concat + audio mux (ffmpeg reads audio directly from URL)
     const listPath = join(jobDir, 'list.txt')
     await writeFile(listPath, scenes.map((_, i) => `file '${join(jobDir, `scaled_${i}.mp4`)}'`).join('\n'))
 
     const outputPath = join(jobDir, 'output.mp4')
-    const concatArgs = ['-loglevel', 'error', '-f', 'concat', '-safe', '0', '-i', listPath]
-    if (audioExt) concatArgs.push('-i', join(jobDir, `audio.${audioExt}`))
-    if (audioExt) concatArgs.push('-map', '0:v:0', '-map', '1:a:0')
+    const concatArgs = [
+      '-loglevel', 'error',
+      '-f', 'concat', '-safe', '0', '-i', listPath,
+    ]
+    if (project.audio_url) {
+      concatArgs.push('-i', project.audio_url, '-map', '0:v:0', '-map', '1:a:0')
+    }
     concatArgs.push('-c:v', 'copy')
-    if (audioExt) concatArgs.push('-c:a', 'aac', '-b:a', '128k', '-shortest')
+    if (project.audio_url) {
+      concatArgs.push('-c:a', 'aac', '-b:a', '128k', '-shortest')
+    }
     concatArgs.push('-y', outputPath)
 
     console.log('[assemble] concat + audio mux')
