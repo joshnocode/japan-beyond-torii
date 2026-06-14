@@ -74,25 +74,6 @@ export default async function handler(req, res) {
   const missing = (scenes || []).filter(s => !s.video_url)
   if (missing.length) return res.status(400).json({ error: `${missing.length} scenes are missing video` })
 
-  // Validate all video URLs before starting heavy work
-  console.log('[assemble] validating', scenes.length, 'video URLs')
-  const urlChecks = await Promise.all(
-    (scenes || []).map(async (scene) => {
-      try {
-        const r = await fetch(scene.video_url, { method: 'HEAD' })
-        return { idx: scene.scene_index + 1, ok: r.ok, status: r.status }
-      } catch (e) {
-        return { idx: scene.scene_index + 1, ok: false, status: e.message }
-      }
-    })
-  )
-  const badUrls = urlChecks.filter(c => !c.ok)
-  if (badUrls.length) {
-    return res.status(400).json({
-      error: `${badUrls.length} video URL(s) inaccessible (scenes: ${badUrls.map(c => `${c.idx} [${c.status}]`).join(', ')}). Re-generate those scenes and retry.`
-    })
-  }
-
   const jobDir = join(tmpdir(), `assembly_${Date.now()}`)
   await mkdir(jobDir, { recursive: true })
 
@@ -127,36 +108,23 @@ export default async function handler(req, res) {
     const listPath = join(jobDir, 'list.txt')
     await writeFile(listPath, scenes.map((_, i) => `file '${join(jobDir, `scene_${i}.mp4`)}'`).join('\n'))
 
-    const srtPath = join(jobDir, 'subs.srt')
     const outputPath = join(jobDir, 'output.mp4')
 
-    // Use -f concat demuxer so FFmpeg processes clips sequentially (one decoder context
-    // at a time) instead of opening all 35 simultaneously via filter_complex.
-    // Subtitles are added as a soft track (mov_text) — burning them in via libass
-    // renders ~4200 frames of text and can add 200+ seconds to the encode time alone.
-    const buildArgs = () => {
-      const args = ['-loglevel', 'error', '-f', 'concat', '-safe', '0', '-i', listPath]
-      if (audioExt) args.push('-i', join(jobDir, `audio.${audioExt}`))
-      args.push('-i', srtPath)
-
-      const audioIdx = audioExt ? 1 : 0
-      const subIdx = audioIdx + 1
-      args.push('-map', '0:v:0')
-      if (audioExt) args.push('-map', '1:a:0')
-      args.push('-map', `${subIdx}:0`)
-
-      args.push('-vf', 'scale=720:-2')
-      // CRF 32 + maxrate cap keeps output well under Supabase's 50MB free tier limit
-      args.push('-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '32', '-maxrate', '1800k', '-bufsize', '3600k')
-      if (audioExt) args.push('-c:a', 'aac', '-b:a', '128k', '-shortest')
-      args.push('-c:s', 'mov_text', '-metadata:s:s:0', 'language=eng')
-      args.push('-y', outputPath)
-      return args
-    }
+    // Use -f concat demuxer so FFmpeg processes clips sequentially.
+    // No subtitle encoding — libass burn-in was ~200s alone, mov_text had compat issues.
+    // Subtitles can be a separate follow-up once core assembly is stable.
+    const args = ['-loglevel', 'error', '-f', 'concat', '-safe', '0', '-i', listPath]
+    if (audioExt) args.push('-i', join(jobDir, `audio.${audioExt}`))
+    if (audioExt) args.push('-map', '0:v:0', '-map', '1:a:0')
+    args.push('-vf', 'scale=720:-2')
+    args.push('-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '32', '-maxrate', '1800k', '-bufsize', '3600k')
+    if (audioExt) args.push('-c:a', 'aac', '-b:a', '128k', '-shortest')
+    args.push('-y', outputPath)
 
     const tEncode = Date.now()
-    console.log('[assemble] starting ffmpeg encode (soft subtitles, no libass render)')
-    await run(ffmpeg, buildArgs())
+    console.log('[assemble] starting ffmpeg encode (no subtitles, concat demuxer)')
+    await run(ffmpeg, args)
+    console.log(`[assemble] encode completed in ${Math.round((Date.now() - tEncode) / 1000)}s`)
     console.log(`[assemble] encode completed in ${Math.round((Date.now() - tEncode) / 1000)}s`)
 
     // Upload to Supabase storage
