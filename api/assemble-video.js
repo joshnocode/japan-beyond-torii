@@ -183,6 +183,8 @@ export default async function handler(req, res) {
     return res.status(200).json({ video_url: videoUrl })
   } catch (err) {
     console.error('[assemble-video] error:', err.message)
+    // Reset status so the UI badge doesn't stay stuck on "ASSEMBLING"
+    await supabase.from('projects').update({ status: 'videos_ready' }).eq('id', project_id).catch(() => {})
     return res.status(500).json({ error: err.message || 'Assembly failed' })
   } finally {
     await rm(jobDir, { recursive: true, force: true }).catch(() => {})

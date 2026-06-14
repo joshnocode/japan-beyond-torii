@@ -153,6 +153,11 @@ export default function AssemblyPanel({ project, scenes, onComplete, onAssemblyS
         return
       }
 
+      // Definitive server error (not a network drop) — clear localStorage so
+      // refresh doesn't loop into resumePoll and show a misleading "timed out"
+      localStorage.removeItem(lsKey(project.id))
+      // Reset stuck "assembling" status in DB so the badge clears
+      await supabase.from('projects').update({ status: 'videos_ready' }).eq('id', project.id).catch(() => {})
       setError(msg)
       setRunning(false)
     }
