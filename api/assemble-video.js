@@ -143,7 +143,8 @@ export default async function handler(req, res) {
       args.push('-vf', vf)
 
       if (audioExt) args.push('-map', '0:v:0', '-map', '1:a:0', '-c:a', 'aac', '-b:a', '128k', '-shortest')
-      args.push('-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '28', '-y', outputPath)
+      // CRF 32 + maxrate cap keeps 35 × 5s clips well under Supabase's 50MB free tier limit
+      args.push('-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '32', '-maxrate', '1800k', '-bufsize', '3600k', '-y', outputPath)
       return args
     }
 
@@ -164,7 +165,7 @@ export default async function handler(req, res) {
     const sizeMB = Math.round(outputBuf.length / 1024 / 1024)
     console.log('[assemble] output size:', sizeMB, 'MB — uploading')
     if (sizeMB > 49) {
-      console.warn('[assemble] WARNING: file is', sizeMB, 'MB — may hit Supabase 50MB free tier limit')
+      throw new Error(`Output is ${sizeMB} MB — exceeds Supabase 50 MB limit. Contact support to upgrade storage.`)
     }
 
     const storagePath = `${project.user_id}/${project_id}/final.mp4`
