@@ -1,31 +1,8 @@
 import { createClient } from '@supabase/supabase-js'
-import { execFile } from 'node:child_process'
-import { join } from 'node:path'
-import { writeFile, readFile, mkdir, rm, chmod, copyFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
-import ffmpegStaticPath from 'ffmpeg-static'
 
 export const maxDuration = 300
 
-async function getFFmpeg() {
-  const dest = join(tmpdir(), 'ffmpeg_bin')
-  try {
-    await copyFile(ffmpegStaticPath, dest)
-    await chmod(dest, 0o755)
-    return dest
-  } catch {
-    return ffmpegStaticPath
-  }
-}
-
-function run(ffmpeg, args) {
-  return new Promise((resolve, reject) => {
-    execFile(ffmpeg, args, { maxBuffer: 100 * 1024 * 1024 }, (err, _out, stderr) => {
-      if (err) reject(new Error(stderr?.slice(-3000) || err.message))
-      else resolve()
-    })
-  })
-}
+const BATCH_SIZE = 5
 
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*')
@@ -49,7 +26,7 @@ export default async function handler(req, res) {
 
   const [{ data: project, error: projErr }, { data: scenes }] = await Promise.all([
     supabase.from('projects').select('*').eq('id', project_id).single(),
-    supabase.from('scenes').select('*').eq('project_id', project_id).order('scene_index'),
+    supabase.from('scenes').select('scene_index,video_url').eq('project_id', project_id).order('scene_index'),
   ])
 
   if (projErr || !project) return res.status(404).json({ error: 'Project not found' })
@@ -57,92 +34,93 @@ export default async function handler(req, res) {
   const missing = (scenes || []).filter(s => !s.video_url)
   if (missing.length) return res.status(400).json({ error: `${missing.length} scenes are missing video` })
 
-  // Respond 202 immediately — assembly runs in Vercel background, client polls Supabase.
-  await supabase.from('projects').update({ status: 'assembling', assembly_error: null }).eq('id', project_id)
-  res.status(202).json({ status: 'assembling' })
+  // Build batch plan
+  const batches = []
+  for (let b = 0; b * BATCH_SIZE < scenes.length; b++) {
+    batches.push({
+      batch_index: b,
+      scene_ids: scenes.slice(b * BATCH_SIZE, (b + 1) * BATCH_SIZE).map(s => ({
+        video_url: s.video_url,
+        scene_index: s.scene_index,
+      })),
+    })
+  }
+
+  // Mark assembling and clear old batch files; respond 202 so client can disconnect
+  await supabase.from('projects')
+    .update({ status: 'assembling', assembly_error: null })
+    .eq('id', project_id)
+
+  // Clean up any leftover batch files from a previous attempt
+  await supabase.storage.from('project-assets')
+    .remove(batches.map(b => `${project.user_id}/${project_id}/batch_${b.batch_index}.mp4`))
+    .catch(() => {})
+
+  res.status(202).json({ status: 'assembling', batch_count: batches.length })
 
   // ─── Everything below runs after the client has received the response ───
 
-  const jobDir = join(tmpdir(), `assembly_${Date.now()}`)
-  await mkdir(jobDir, { recursive: true })
+  const baseUrl = `https://${req.headers.host}`
+  const authHeader = { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }
 
   try {
-    const t0 = Date.now()
-    const ffmpeg = await getFFmpeg()
-    console.log(`[assemble] start — ${scenes.length} scenes, project ${project_id}`)
+    // Fire all batches simultaneously — each is its own Lambda invocation
+    console.log(`[orchestrator] firing ${batches.length} batch jobs in parallel`)
+    await Promise.all(batches.map(b =>
+      fetch(`${baseUrl}/api/assemble-batch`, {
+        method: 'POST',
+        headers: authHeader,
+        body: JSON.stringify({ project_id, batch_index: b.batch_index, scene_ids: b.scene_ids }),
+      }).then(r => {
+        if (!r.ok) throw new Error(`Batch ${b.batch_index} kickoff failed: HTTP ${r.status}`)
+      })
+    ))
 
-    // Download in batches of 5 (parallel within each batch) and keep all clips on disk.
-    // Then one single FFmpeg pass encodes everything — far fewer process startups,
-    // and batch downloads are ~5x faster than sequential pipelined downloads.
-    const BATCH = 5
-    const batches = Math.ceil(scenes.length / BATCH)
-    let totalDownloadMB = 0
+    // Poll Supabase Storage until all batch files are present (or an error marker appears)
+    console.log('[orchestrator] all batches kicked off — polling for completion')
+    const startWait = Date.now()
+    while (true) {
+      await new Promise(r => setTimeout(r, 6000))
 
-    for (let b = 0; b < batches; b++) {
-      const slice = scenes.slice(b * BATCH, (b + 1) * BATCH)
-      const bufs = await Promise.all(slice.map(async (scene, bi) => {
-        const resp = await fetch(scene.video_url)
-        if (!resp.ok) throw new Error(`Scene ${scene.scene_index + 1} download failed (HTTP ${resp.status})`)
-        return { idx: b * BATCH + bi, buf: Buffer.from(await resp.arrayBuffer()) }
-      }))
-      for (const { idx, buf } of bufs) {
-        await writeFile(join(jobDir, `clip_${idx}.mp4`), buf)
-        totalDownloadMB += buf.length / 1024 / 1024
+      // Check for error markers
+      const errChecks = await Promise.all(batches.map(b =>
+        supabase.storage.from('project-assets')
+          .download(`${project.user_id}/${project_id}/batch_${b.batch_index}.error`)
+          .then(({ data }) => data ? `Batch ${b.batch_index} failed` : null)
+          .catch(() => null)
+      ))
+      const batchErr = errChecks.find(Boolean)
+      if (batchErr) throw new Error(batchErr)
+
+      // Check for completed batch files
+      const { data: listing } = await supabase.storage.from('project-assets')
+        .list(`${project.user_id}/${project_id}`, { limit: 100 })
+      const doneCount = batches.filter(b =>
+        listing?.some(f => f.name === `batch_${b.batch_index}.mp4`)
+      ).length
+      console.log(`[orchestrator] ${doneCount}/${batches.length} batches complete`)
+
+      if (doneCount === batches.length) break
+
+      if (Date.now() - startWait > 220000) {
+        throw new Error(`Batch timeout — only ${doneCount}/${batches.length} batches completed in 220s`)
       }
-      console.log(`[assemble] batch ${b + 1}/${batches} downloaded — ${totalDownloadMB.toFixed(0)}MB total (${Math.round((Date.now() - t0) / 1000)}s)`)
-
-      if (totalDownloadMB > 420) {
-        throw new Error(`Downloads hit ${totalDownloadMB.toFixed(0)}MB — clips are too large for /tmp (each ~${(totalDownloadMB / scenes.length).toFixed(0)}MB). Fal.ai may be delivering very high bitrate source files.`)
-      }
     }
 
-    // Single FFmpeg pass: concat demuxer reads clips sequentially, re-encodes to 720p
-    const listPath = join(jobDir, 'list.txt')
-    await writeFile(listPath, scenes.map((_, i) => `file '${join(jobDir, `clip_${i}.mp4`)}'`).join('\n'))
+    // All batches done — trigger final assembly
+    console.log('[orchestrator] all batches done, triggering final assembly')
+    await fetch(`${baseUrl}/api/assemble-final`, {
+      method: 'POST',
+      headers: authHeader,
+      body: JSON.stringify({ project_id, batch_count: batches.length }),
+    })
 
-    const outputPath = join(jobDir, 'output.mp4')
-    const encodeArgs = [
-      '-loglevel', 'error',
-      '-f', 'concat', '-safe', '0', '-i', listPath,
-    ]
-    if (project.audio_url) {
-      encodeArgs.push('-i', project.audio_url, '-map', '0:v:0', '-map', '1:a:0')
-    }
-    encodeArgs.push(
-      '-vf', 'scale=720:-2',
-      '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '34',
-      '-maxrate', '1400k', '-bufsize', '2800k',
-    )
-    if (project.audio_url) {
-      encodeArgs.push('-c:a', 'aac', '-b:a', '128k', '-shortest')
-    }
-    encodeArgs.push('-y', outputPath)
-
-    console.log(`[assemble] single-pass encode start (${Math.round((Date.now() - t0) / 1000)}s elapsed after downloads)`)
-    await run(ffmpeg, encodeArgs)
-    console.log(`[assemble] encode done (${Math.round((Date.now() - t0) / 1000)}s total)`)
-
-    const outputBuf = await readFile(outputPath)
-    const sizeMB = outputBuf.length / 1024 / 1024
-    console.log('[assemble] output:', sizeMB.toFixed(1), 'MB — uploading')
-    if (sizeMB > 45) throw new Error(`Output is ${sizeMB.toFixed(1)} MB — too large for storage (target <45 MB). Try generating with lower quality or fewer scenes.`)
-
-    const storagePath = `${project.user_id}/${project_id}/final.mp4`
-    const { error: uploadErr } = await supabase.storage
-      .from('project-assets')
-      .upload(storagePath, outputBuf, { contentType: 'video/mp4', upsert: true })
-    if (uploadErr) throw new Error(`Upload failed: ${uploadErr.message}`)
-
-    const { data: urlData } = supabase.storage.from('project-assets').getPublicUrl(storagePath)
-    await supabase.from('projects').update({ video_url: urlData.publicUrl, status: 'complete' }).eq('id', project_id)
-    console.log(`[assemble] complete in ${Math.round((Date.now() - t0) / 1000)}s:`, urlData.publicUrl)
+    console.log('[orchestrator] final assembly triggered')
   } catch (err) {
-    console.error('[assemble-video] FAILED:', err.message)
+    console.error('[orchestrator] FAILED:', err.message)
     await supabase.from('projects')
       .update({ status: 'videos_ready', assembly_error: err.message })
       .eq('id', project_id)
       .catch(() => {})
-  } finally {
-    await rm(jobDir, { recursive: true, force: true }).catch(() => {})
   }
 }
