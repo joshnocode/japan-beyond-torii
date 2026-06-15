@@ -78,12 +78,14 @@ export default function AssemblyPanel({ project, scenes, onComplete, onAssemblyS
   }
 
   // Pure polling — assembly runs in cloud, we just watch DB
-  const startPolling = (startedAt) => {
+  const startPolling = (startedAt, { skipRunningSet } = {}) => {
     pollStopRef.current = false
     const t = startedAt || startRef.current || Date.now()
     startRef.current = t
-    setRunning(true)
-    onAssemblyStart?.()
+    if (!skipRunningSet) {
+      setRunning(true)
+      onAssemblyStart?.()
+    }
 
     const poll = async () => {
       while (!pollStopRef.current) {
@@ -135,10 +137,14 @@ export default function AssemblyPanel({ project, scenes, onComplete, onAssemblyS
     localStorage.setItem(lsKey(project.id), now.toString())
     startRef.current = now
 
-    // Reset any stuck 'assembling' state (e.g. Lambda was hard-killed, catch never ran)
-    await supabase.from('projects').update({ status: 'videos_ready' }).eq('id', project.id).catch(() => {})
+    // Show spinner immediately — don't wait for async ops
+    setRunning(true)
+    onAssemblyStart?.()
 
     try {
+      // Reset any stuck 'assembling' state (e.g. Lambda was hard-killed, catch never ran)
+      await supabase.from('projects').update({ status: 'videos_ready' }).eq('id', project.id).catch(() => {})
+
       const { data: { session } } = await supabase.auth.getSession()
       const res = await fetch(`${API_BASE}/api/assemble-video`, {
         method: 'POST',
@@ -150,9 +156,7 @@ export default function AssemblyPanel({ project, scenes, onComplete, onAssemblyS
       })
 
       if (res.status === 202) {
-        // Assembly kicked off in cloud — switch to poll mode
-        onAssemblyStart?.()
-        startPolling(now)
+        startPolling(now, { skipRunningSet: true })
         return
       }
 
@@ -162,18 +166,18 @@ export default function AssemblyPanel({ project, scenes, onComplete, onAssemblyS
       }
 
       // Shouldn't normally reach here, but handle gracefully
-      startPolling(now)
+      startPolling(now, { skipRunningSet: true })
     } catch (err) {
       const msg = err.message || 'Assembly failed'
       // Network error: server may still be running — poll to find out
       if (msg === 'Load failed' || msg === 'Failed to fetch' || msg.includes('NetworkError')) {
-        onAssemblyStart?.()
-        startPolling(now)
+        startPolling(now, { skipRunningSet: true })
         return
       }
       // Hard client-side error (e.g. auth failure)
       localStorage.removeItem(lsKey(project.id))
       saveError(msg)
+      setRunning(false)
     }
   }
 
