@@ -62,21 +62,32 @@ export default async function handler(req, res) {
     const ffmpeg = await getFFmpeg()
     console.log(`[final] start — stitching ${batch_count} batches`)
 
-    // Download all intermediate batch files in parallel
-    const batchFiles = await Promise.all(
-      Array.from({ length: batch_count }, async (_, b) => {
-        const storagePath = `${project.user_id}/${project_id}/batch_${b}.mp4`
-        const { data, error } = await supabase.storage
-          .from('project-assets')
-          .download(storagePath)
-        if (error) throw new Error(`Could not download batch ${b}: ${error.message}`)
-        const buf = Buffer.from(await data.arrayBuffer())
-        const localPath = join(jobDir, `batch_${b}.mp4`)
-        await writeFile(localPath, buf)
-        return localPath
-      })
-    )
-    console.log(`[final] batch downloads done (${Math.round((Date.now() - t0) / 1000)}s)`)
+    // Download all batch files + audio in parallel
+    const downloadTasks = Array.from({ length: batch_count }, async (_, b) => {
+      const storagePath = `${project.user_id}/${project_id}/batch_${b}.mp4`
+      const { data, error } = await supabase.storage
+        .from('project-assets')
+        .download(storagePath)
+      if (error) throw new Error(`Could not download batch ${b}: ${error.message}`)
+      const buf = Buffer.from(await data.arrayBuffer())
+      const localPath = join(jobDir, `batch_${b}.mp4`)
+      await writeFile(localPath, buf)
+      return localPath
+    })
+
+    let audioLocalPath = null
+    if (project.audio_url) {
+      downloadTasks.push((async () => {
+        const resp = await fetch(project.audio_url)
+        if (!resp.ok) throw new Error(`Audio download failed (HTTP ${resp.status})`)
+        const buf = Buffer.from(await resp.arrayBuffer())
+        audioLocalPath = join(jobDir, 'audio')
+        await writeFile(audioLocalPath, buf)
+      })())
+    }
+
+    const batchFiles = await Promise.all(downloadTasks).then(results => results.slice(0, batch_count))
+    console.log(`[final] downloads done (${Math.round((Date.now() - t0) / 1000)}s)`)
 
     // Stream-copy concat all batches (already encoded at identical settings)
     const listPath = join(jobDir, 'list.txt')
@@ -87,11 +98,11 @@ export default async function handler(req, res) {
       '-loglevel', 'error',
       '-f', 'concat', '-safe', '0', '-i', listPath,
     ]
-    if (project.audio_url) {
-      concatArgs.push('-i', project.audio_url, '-map', '0:v:0', '-map', '1:a:0')
+    if (audioLocalPath) {
+      concatArgs.push('-i', audioLocalPath, '-map', '0:v:0', '-map', '1:a:0')
     }
     concatArgs.push('-c:v', 'copy')
-    if (project.audio_url) {
+    if (audioLocalPath) {
       concatArgs.push('-c:a', 'aac', '-b:a', '128k', '-shortest')
     }
     concatArgs.push('-y', outputPath)
@@ -116,12 +127,11 @@ export default async function handler(req, res) {
       .update({ video_url: urlData.publicUrl, status: 'complete', assembly_error: null })
       .eq('id', project_id)
 
-    // Clean up intermediate batch files
-    await Promise.all(
+    // Clean up intermediate batch files (best-effort)
+    await Promise.allSettled(
       Array.from({ length: batch_count }, (_, b) =>
         supabase.storage.from('project-assets')
           .remove([`${project.user_id}/${project_id}/batch_${b}.mp4`])
-          .catch(() => {})
       )
     )
 
