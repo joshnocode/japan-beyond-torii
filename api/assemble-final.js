@@ -7,6 +7,9 @@ import ffmpegStaticPath from 'ffmpeg-static'
 
 export const maxDuration = 300
 
+const BATCH_POLL_INTERVAL_MS = 6_000
+const BATCH_WAIT_TIMEOUT_MS  = 150_000 // 2.5 min — leaves ~150s for download+ffmpeg+upload
+
 async function getFFmpeg() {
   const dest = join(tmpdir(), 'ffmpeg_bin')
   try {
@@ -51,7 +54,7 @@ export default async function handler(req, res) {
     .from('projects').select('*').eq('id', project_id).single()
   if (projErr || !project) return res.status(404).json({ error: 'Project not found' })
 
-  // Respond immediately — final assembly runs in background
+  // Respond immediately — work runs in background
   res.status(202).json({ status: 'finalizing' })
 
   const jobDir = join(tmpdir(), `final_${project_id}_${Date.now()}`)
@@ -60,14 +63,51 @@ export default async function handler(req, res) {
   try {
     const t0 = Date.now()
     const ffmpeg = await getFFmpeg()
-    console.log(`[final] start — stitching ${batch_count} batches`)
 
-    // Download all batch files + audio in parallel
-    const downloadTasks = Array.from({ length: batch_count }, async (_, b) => {
-      const storagePath = `${project.user_id}/${project_id}/batch_${b}.mp4`
-      const { data, error } = await supabase.storage
+    // ── Wait for all batch Lambdas to finish ──
+    console.log(`[final] waiting for ${batch_count} batches…`)
+    const waitStart = Date.now()
+
+    while (true) {
+      await new Promise(r => setTimeout(r, BATCH_POLL_INTERVAL_MS))
+
+      // Check for any error markers written by batch Lambdas
+      const errChecks = await Promise.all(
+        Array.from({ length: batch_count }, async (_, b) => {
+          const { data } = await supabase.storage.from('project-assets')
+            .download(`${project.user_id}/${project_id}/batch_${b}.error`)
+          return data ? `Batch ${b} failed` : null
+        })
+      )
+      const batchErr = errChecks.find(Boolean)
+      if (batchErr) throw new Error(batchErr)
+
+      // Count completed batch files
+      const { data: listing, error: listErr } = await supabase.storage
         .from('project-assets')
-        .download(storagePath)
+        .list(`${project.user_id}/${project_id}`, { limit: 100 })
+      if (listErr) throw new Error(`Storage listing failed: ${listErr.message}`)
+
+      const doneCount = Array.from({ length: batch_count }, (_, b) => b)
+        .filter(b => listing?.some(f => f.name === `batch_${b}.mp4`)).length
+
+      const waitedSec = Math.round((Date.now() - waitStart) / 1000)
+      console.log(`[final] ${doneCount}/${batch_count} batches ready (waited ${waitedSec}s)`)
+
+      if (doneCount === batch_count) break
+
+      if (Date.now() - waitStart > BATCH_WAIT_TIMEOUT_MS) {
+        throw new Error(`Batch timeout — only ${doneCount}/${batch_count} batches ready after ${BATCH_WAIT_TIMEOUT_MS / 1000}s`)
+      }
+    }
+
+    console.log(`[final] all batches ready — starting assembly (${Math.round((Date.now() - t0) / 1000)}s elapsed)`)
+
+    // ── Download all batch files + audio in parallel ──
+    let audioLocalPath = null
+    const batchDownloads = Array.from({ length: batch_count }, async (_, b) => {
+      const storagePath = `${project.user_id}/${project_id}/batch_${b}.mp4`
+      const { data, error } = await supabase.storage.from('project-assets').download(storagePath)
       if (error) throw new Error(`Could not download batch ${b}: ${error.message}`)
       const buf = Buffer.from(await data.arrayBuffer())
       const localPath = join(jobDir, `batch_${b}.mp4`)
@@ -75,9 +115,8 @@ export default async function handler(req, res) {
       return localPath
     })
 
-    let audioLocalPath = null
     if (project.audio_url) {
-      downloadTasks.push((async () => {
+      batchDownloads.push((async () => {
         const resp = await fetch(project.audio_url)
         if (!resp.ok) throw new Error(`Audio download failed (HTTP ${resp.status})`)
         const buf = Buffer.from(await resp.arrayBuffer())
@@ -86,18 +125,16 @@ export default async function handler(req, res) {
       })())
     }
 
-    const batchFiles = await Promise.all(downloadTasks).then(results => results.slice(0, batch_count))
+    const results = await Promise.all(batchDownloads)
+    const batchFiles = results.slice(0, batch_count)
     console.log(`[final] downloads done (${Math.round((Date.now() - t0) / 1000)}s)`)
 
-    // Stream-copy concat all batches (already encoded at identical settings)
+    // ── Stream-copy concat + audio mux ──
     const listPath = join(jobDir, 'list.txt')
     await writeFile(listPath, batchFiles.map(p => `file '${p}'`).join('\n'))
 
     const outputPath = join(jobDir, 'output.mp4')
-    const concatArgs = [
-      '-loglevel', 'error',
-      '-f', 'concat', '-safe', '0', '-i', listPath,
-    ]
+    const concatArgs = ['-loglevel', 'error', '-f', 'concat', '-safe', '0', '-i', listPath]
     if (audioLocalPath) {
       concatArgs.push('-i', audioLocalPath, '-map', '0:v:0', '-map', '1:a:0')
     }
@@ -107,14 +144,14 @@ export default async function handler(req, res) {
     }
     concatArgs.push('-y', outputPath)
 
-    console.log('[final] stream-copy concat + audio mux')
+    console.log('[final] running ffmpeg concat + mux')
     await run(ffmpeg, concatArgs)
-    console.log(`[final] concat done (${Math.round((Date.now() - t0) / 1000)}s)`)
+    console.log(`[final] ffmpeg done (${Math.round((Date.now() - t0) / 1000)}s)`)
 
     const outputBuf = await readFile(outputPath)
     const sizeMB = outputBuf.length / 1024 / 1024
-    console.log('[final] output:', sizeMB.toFixed(1), 'MB — uploading')
-    if (sizeMB > 45) throw new Error(`Output is ${sizeMB.toFixed(1)} MB — too large for storage (target <45 MB)`)
+    console.log(`[final] output ${sizeMB.toFixed(1)} MB — uploading`)
+    if (sizeMB > 45) throw new Error(`Output is ${sizeMB.toFixed(1)} MB — too large (limit 45 MB)`)
 
     const finalPath = `${project.user_id}/${project_id}/final.mp4`
     const { error: uploadErr } = await supabase.storage

@@ -46,76 +46,48 @@ export default async function handler(req, res) {
     })
   }
 
-  // Mark assembling and clear old batch files; respond 202 so client can disconnect
+  // Mark assembling and clean up stale files from any previous attempt
   await supabase.from('projects')
     .update({ status: 'assembling', assembly_error: null })
     .eq('id', project_id)
 
-  // Clean up any leftover batch files from a previous attempt
-  await supabase.storage.from('project-assets')
-    .remove(batches.map(b => `${project.user_id}/${project_id}/batch_${b.batch_index}.mp4`))
-    .catch(() => {})
+  // Remove old batch + error files (best-effort)
+  const staleFiles = batches.flatMap(b => [
+    `${project.user_id}/${project_id}/batch_${b.batch_index}.mp4`,
+    `${project.user_id}/${project_id}/batch_${b.batch_index}.error`,
+  ])
+  await supabase.storage.from('project-assets').remove(staleFiles).catch(() => {})
 
   res.status(202).json({ status: 'assembling', batch_count: batches.length })
 
-  // ─── Everything below runs after the client has received the response ───
+  // ─── Everything below runs after the client receives the 202 ───
 
   const baseUrl = `https://${req.headers.host}`
   const authHeader = { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }
 
   try {
-    // Fire all batches simultaneously — each is its own Lambda invocation
-    console.log(`[orchestrator] firing ${batches.length} batch jobs in parallel`)
-    await Promise.all(batches.map(b =>
-      fetch(`${baseUrl}/api/assemble-batch`, {
+    // Fire all batch jobs + final assembly simultaneously.
+    // The final Lambda polls for batch completion itself — giving it a full 300s budget.
+    console.log(`[orchestrator] firing ${batches.length} batch jobs + final assembly`)
+    await Promise.all([
+      ...batches.map(b =>
+        fetch(`${baseUrl}/api/assemble-batch`, {
+          method: 'POST',
+          headers: authHeader,
+          body: JSON.stringify({ project_id, batch_index: b.batch_index, scene_ids: b.scene_ids }),
+        }).then(r => {
+          if (!r.ok) throw new Error(`Batch ${b.batch_index} kickoff failed: HTTP ${r.status}`)
+        })
+      ),
+      fetch(`${baseUrl}/api/assemble-final`, {
         method: 'POST',
         headers: authHeader,
-        body: JSON.stringify({ project_id, batch_index: b.batch_index, scene_ids: b.scene_ids }),
+        body: JSON.stringify({ project_id, batch_count: batches.length }),
       }).then(r => {
-        if (!r.ok) throw new Error(`Batch ${b.batch_index} kickoff failed: HTTP ${r.status}`)
-      })
-    ))
-
-    // Poll Supabase Storage until all batch files are present (or an error marker appears)
-    console.log('[orchestrator] all batches kicked off — polling for completion')
-    const startWait = Date.now()
-    while (true) {
-      await new Promise(r => setTimeout(r, 6000))
-
-      // Check for error markers
-      const errChecks = await Promise.all(batches.map(b =>
-        supabase.storage.from('project-assets')
-          .download(`${project.user_id}/${project_id}/batch_${b.batch_index}.error`)
-          .then(({ data }) => data ? `Batch ${b.batch_index} failed` : null)
-          .catch(() => null)
-      ))
-      const batchErr = errChecks.find(Boolean)
-      if (batchErr) throw new Error(batchErr)
-
-      // Check for completed batch files
-      const { data: listing } = await supabase.storage.from('project-assets')
-        .list(`${project.user_id}/${project_id}`, { limit: 100 })
-      const doneCount = batches.filter(b =>
-        listing?.some(f => f.name === `batch_${b.batch_index}.mp4`)
-      ).length
-      console.log(`[orchestrator] ${doneCount}/${batches.length} batches complete`)
-
-      if (doneCount === batches.length) break
-
-      if (Date.now() - startWait > 220000) {
-        throw new Error(`Batch timeout — only ${doneCount}/${batches.length} batches completed in 220s`)
-      }
-    }
-
-    // All batches done — trigger final assembly
-    console.log('[orchestrator] all batches done, triggering final assembly')
-    await fetch(`${baseUrl}/api/assemble-final`, {
-      method: 'POST',
-      headers: authHeader,
-      body: JSON.stringify({ project_id, batch_count: batches.length }),
-    })
-
-    console.log('[orchestrator] final assembly triggered')
+        if (!r.ok) throw new Error(`Final assembly kickoff failed: HTTP ${r.status}`)
+      }),
+    ])
+    console.log('[orchestrator] all jobs fired — exiting')
   } catch (err) {
     console.error('[orchestrator] FAILED:', err.message)
     await supabase.from('projects')
