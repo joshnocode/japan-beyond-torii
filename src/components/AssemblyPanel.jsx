@@ -143,7 +143,7 @@ export default function AssemblyPanel({ project, scenes, onComplete, onAssemblyS
 
     try {
       // Reset any stuck 'assembling' state (e.g. Lambda was hard-killed, catch never ran)
-      await supabase.from('projects').update({ status: 'videos_ready' }).eq('id', project.id).catch(() => {})
+      try { await supabase.from('projects').update({ status: 'videos_ready' }).eq('id', project.id) } catch {}
 
       const { data: { session } } = await supabase.auth.getSession()
       const res = await fetch(`${API_BASE}/api/assemble-video`, {
@@ -161,7 +161,8 @@ export default function AssemblyPanel({ project, scenes, onComplete, onAssemblyS
       }
 
       if (!res.ok) {
-        const body = await res.json().catch(() => ({}))
+        let body = {}
+        try { body = await res.json() } catch {}
         throw new Error(body.error || `Server error ${res.status}`)
       }
 
