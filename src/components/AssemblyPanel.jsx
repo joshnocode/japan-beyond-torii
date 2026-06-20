@@ -135,21 +135,20 @@ export default function AssemblyPanel({ project, scenes, onComplete, onAssemblyS
   const startAssembly = async () => {
     if (running) return
     clearError()
-    pollStopRef.current = true // stop any existing poll
+    pollStopRef.current = true
 
     const now = Date.now()
     localStorage.setItem(lsKey(project.id), now.toString())
     startRef.current = now
-
-    // Show spinner immediately — don't wait for async ops
     setRunning(true)
     onAssemblyStart?.()
 
     try {
-      // Reset any stuck 'assembling' state (e.g. Lambda was hard-killed, catch never ran)
-      try { await supabase.from('projects').update({ status: 'videos_ready' }).eq('id', project.id) } catch {}
-
       const { data: { session } } = await supabase.auth.getSession()
+
+      // Single Lambda does everything synchronously — we wait for the real result.
+      // If the connection drops mid-flight, the catch block falls back to polling
+      // (the Lambda still updates Supabase when it finishes).
       const res = await fetch(`${API_BASE}/api/assemble-video`, {
         method: 'POST',
         headers: {
@@ -159,27 +158,39 @@ export default function AssemblyPanel({ project, scenes, onComplete, onAssemblyS
         body: JSON.stringify({ project_id: project.id }),
       })
 
-      if (res.status === 202) {
-        startPolling(now, { skipRunningSet: true })
+      let body = {}
+      try { body = await res.json() } catch {}
+
+      if (body.video_url) {
+        // Success — Lambda returned the final video URL directly
+        localStorage.removeItem(lsKey(project.id))
+        localStorage.removeItem(errKey(project.id))
+        setVideoUrl(body.video_url)
+        setRunning(false)
+        onComplete?.(body.video_url)
         return
       }
 
-      if (!res.ok) {
-        let body = {}
-        try { body = await res.json() } catch {}
-        throw new Error(body.error || `Server error ${res.status}`)
+      if (!res.ok || body.error) {
+        // Lambda returned a real error with logs we can show
+        localStorage.removeItem(lsKey(project.id))
+        const detail = body.log?.length
+          ? `${body.error}\n\nLogs:\n${body.log.join('\n')}`
+          : (body.error || `Server error ${res.status}`)
+        saveError(detail)
+        setRunning(false)
+        return
       }
 
-      // Shouldn't normally reach here, but handle gracefully
+      // Unexpected response — fall back to polling
       startPolling(now, { skipRunningSet: true })
     } catch (err) {
       const msg = err.message || 'Assembly failed'
-      // Network error: server may still be running — poll to find out
-      if (msg === 'Load failed' || msg === 'Failed to fetch' || msg.includes('NetworkError')) {
+      // Network error: Lambda may still be running — poll Supabase
+      if (msg === 'Load failed' || msg === 'Failed to fetch' || msg.includes('NetworkError') || msg.includes('network')) {
         startPolling(now, { skipRunningSet: true })
         return
       }
-      // Hard client-side error (e.g. auth failure)
       localStorage.removeItem(lsKey(project.id))
       saveError(msg)
       setRunning(false)
@@ -306,7 +317,7 @@ export default function AssemblyPanel({ project, scenes, onComplete, onAssemblyS
             <div className="spinner" />
             <div style={{ flex: 1 }}>
               <p className="gen-step">Assembling in Cloud</p>
-              <p className="gen-detail">You can close this page — we'll finish in the background</p>
+              <p className="gen-detail">Hang tight — assembling your video (~60–90s)</p>
             </div>
             <span className="assembly-eta">{fmt(remaining, elapsed, estimated)} left</span>
           </div>
@@ -323,8 +334,16 @@ export default function AssemblyPanel({ project, scenes, onComplete, onAssemblyS
 
       {error && (
         <div className="assembly-error-box">
-          <p className="error-message assembly-error">{error}</p>
-          <p className="assembly-error-hint">Screenshot this error and share it to help debug.</p>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '8px' }}>
+            <pre className="error-message assembly-error" style={{ margin: 0, whiteSpace: 'pre-wrap', wordBreak: 'break-all', flex: 1 }}>{error}</pre>
+            <button
+              className="btn-secondary"
+              onClick={() => navigator.clipboard.writeText(error)}
+              style={{ fontSize: '12px', padding: '4px 10px', flexShrink: 0 }}
+            >
+              Copy
+            </button>
+          </div>
         </div>
       )}
 
