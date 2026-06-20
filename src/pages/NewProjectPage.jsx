@@ -177,7 +177,7 @@ export default function NewProjectPage() {
               <div className="form-group">
                 <label>
                   ElevenLabs Audio File
-                  <span className="label-optional"> (MP3 or WAV — can add after)</span>
+                  <span className="label-optional"> (MP3, WAV, or M4A — can add after)</span>
                 </label>
                 <div
                   className={`audio-drop-zone ${audioFile ? 'has-file' : ''}`}

@@ -67,7 +67,7 @@ export default function AudioUploader({ project, onUploaded }) {
         ) : (
           <div className="audio-placeholder">
             <span>🎵</span>
-            <p>Click or drag MP3 / WAV here</p>
+            <p>Click or drag MP3, WAV, or M4A here</p>
           </div>
         )}
         <input
