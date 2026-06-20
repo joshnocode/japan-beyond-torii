@@ -67,30 +67,68 @@ export default async function handler(req, res) {
     const ffmpeg = await getFFmpeg()
     log.push(`[${ts()}] ffmpeg ready`)
 
-    // Download all clips in parallel
-    log.push(`[${ts()}] downloading ${scenes.length} clips`)
-    const clips = await Promise.all(scenes.map(async (s) => {
-      const resp = await fetch(s.video_url)
-      if (!resp.ok) throw new Error(`Scene ${s.scene_index + 1} download failed (HTTP ${resp.status})`)
-      const buf = Buffer.from(await resp.arrayBuffer())
-      return { scene_index: s.scene_index, buf }
-    }))
-    log.push(`[${ts()}] all clips downloaded`)
+    // Download clips and audio in parallel
+    log.push(`[${ts()}] downloading ${scenes.length} clips + audio`)
+    const [clips, audioBuf] = await Promise.all([
+      Promise.all(scenes.map(async (s) => {
+        const resp = await fetch(s.video_url)
+        if (!resp.ok) throw new Error(`Scene ${s.scene_index + 1} download failed (HTTP ${resp.status})`)
+        const buf = Buffer.from(await resp.arrayBuffer())
+        return { scene_index: s.scene_index, buf }
+      })),
+      project.audio_url
+        ? fetch(project.audio_url).then(r => {
+            if (!r.ok) throw new Error(`Audio download failed (HTTP ${r.status})`)
+            return r.arrayBuffer().then(ab => Buffer.from(ab))
+          })
+        : Promise.resolve(null),
+    ])
+    log.push(`[${ts()}] downloads complete`)
 
-    // Encode each clip sequentially (one ffmpeg at full CPU)
+    // Write audio and probe its duration so we can loop clips to fill the narration
+    let audioPath = null
+    let audioDuration = null
+    if (audioBuf) {
+      audioPath = join(jobDir, 'audio.mp3')
+      await writeFile(audioPath, audioBuf)
+      log.push(`[${ts()}] audio: ${(audioBuf.length / 1024 / 1024).toFixed(1)}MB`)
+
+      const probeOut = await new Promise((resolve) => {
+        execFile(ffmpeg, ['-i', audioPath, '-f', 'null', '-'],
+          { maxBuffer: 10 * 1024 * 1024 },
+          (_err, _out, stderr) => resolve(stderr || ''))
+      })
+      const m = probeOut.match(/Duration:\s*(\d+):(\d+):(\d+\.?\d*)/)
+      if (m) {
+        audioDuration = parseInt(m[1]) * 3600 + parseInt(m[2]) * 60 + parseFloat(m[3])
+        log.push(`[${ts()}] audio duration: ${audioDuration.toFixed(1)}s`)
+      }
+    }
+
+    // Each clip is looped to fill its equal share of the narration.
+    // Without audio, clips play at their native 5s length.
+    const clipDuration = audioDuration ? audioDuration / scenes.length : null
+    if (clipDuration) log.push(`[${ts()}] looping each clip to ${clipDuration.toFixed(2)}s`)
+
+    // Encode each clip sequentially
     log.push(`[${ts()}] encoding ${scenes.length} clips`)
     const scaledPaths = []
     for (const { scene_index, buf } of clips) {
-      const origPath = join(jobDir, `orig_${scene_index}.mp4`)
+      const origPath  = join(jobDir, `orig_${scene_index}.mp4`)
       const scaledPath = join(jobDir, `scaled_${scene_index}.mp4`)
       await writeFile(origPath, buf)
-      await run(ffmpeg, [
-        '-loglevel', 'error', '-i', origPath,
+
+      // -stream_loop -1 must precede -i so FFmpeg loops the source before decoding
+      const args = ['-loglevel', 'error']
+      if (clipDuration) args.push('-stream_loop', '-1')
+      args.push('-i', origPath,
         '-vf', 'scale=720:-2',
         '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '34',
-        '-maxrate', '1400k', '-bufsize', '2800k', '-an',
-        '-y', scaledPath,
-      ])
+        '-maxrate', '1400k', '-bufsize', '2800k', '-an')
+      if (clipDuration) args.push('-t', clipDuration.toFixed(3))
+      args.push('-y', scaledPath)
+
+      await run(ffmpeg, args)
       await unlink(origPath)
       scaledPaths.push({ scene_index, path: scaledPath })
     }
@@ -100,18 +138,6 @@ export default async function handler(req, res) {
     scaledPaths.sort((a, b) => a.scene_index - b.scene_index)
     const listPath = join(jobDir, 'list.txt')
     await writeFile(listPath, scaledPaths.map(({ path }) => `file '${path}'`).join('\n'))
-
-    // Download audio in parallel with nothing (it's fast)
-    let audioPath = null
-    if (project.audio_url) {
-      log.push(`[${ts()}] downloading audio`)
-      const resp = await fetch(project.audio_url)
-      if (!resp.ok) throw new Error(`Audio download failed (HTTP ${resp.status})`)
-      const buf = Buffer.from(await resp.arrayBuffer())
-      audioPath = join(jobDir, 'audio')
-      await writeFile(audioPath, buf)
-      log.push(`[${ts()}] audio downloaded (${(buf.length / 1024 / 1024).toFixed(1)}MB)`)
-    }
 
     // Final concat + audio mux
     const outputPath = join(jobDir, 'output.mp4')
