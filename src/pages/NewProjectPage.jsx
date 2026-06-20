@@ -1,4 +1,4 @@
-import { useState, useRef } from 'react'
+import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../hooks/useAuth'
@@ -8,11 +8,8 @@ const API_BASE = import.meta.env.DEV ? 'http://localhost:3000' : ''
 export default function NewProjectPage() {
   const navigate = useNavigate()
   const { session } = useAuth()
-  const audioRef = useRef(null)
-
   const [title, setTitle] = useState('')
   const [script, setScript] = useState('')
-  const [audioFile, setAudioFile] = useState(null)
   const [phase, setPhase] = useState('input') // input | analyzing | brief | saving
   const [brief, setBrief] = useState(null)
   const [error, setError] = useState('')
@@ -51,23 +48,6 @@ export default function NewProjectPage() {
     setError('')
 
     try {
-      let audioUrl = null
-
-      if (audioFile) {
-        const ext = audioFile.name.split('.').pop()
-        const path = `${session.user.id}/${Date.now()}_audio.${ext}`
-        const { error: uploadErr } = await supabase.storage
-          .from('project-assets')
-          .upload(path, audioFile, { upsert: false })
-
-        if (uploadErr) throw new Error(`Audio upload failed: ${uploadErr.message}`)
-
-        const { data: urlData } = supabase.storage
-          .from('project-assets')
-          .getPublicUrl(path)
-        audioUrl = urlData.publicUrl
-      }
-
       const { data: project, error: insertErr } = await supabase
         .from('projects')
         .insert({
@@ -76,7 +56,6 @@ export default function NewProjectPage() {
           script,
           brief,
           status: 'draft',
-          audio_url: audioUrl,
           cost_cents: Math.round((brief.cost_estimate?.total_usd || 0) * 100),
         })
         .select()
@@ -135,7 +114,7 @@ export default function NewProjectPage() {
             <div className="analyzing-card">
               <div className="spinner large" />
               <h3>Saving Project</h3>
-              <p>Uploading audio and creating project record…</p>
+              <p>Creating your project record…</p>
             </div>
           </div>
         )}
@@ -174,48 +153,6 @@ export default function NewProjectPage() {
                 />
               </div>
 
-              <div className="form-group">
-                <label>
-                  ElevenLabs Audio File
-                  <span className="label-optional"> (MP3, WAV, or M4A — can add after)</span>
-                </label>
-                <div
-                  className={`audio-drop-zone ${audioFile ? 'has-file' : ''}`}
-                  onClick={() => audioRef.current?.click()}
-                  onDragOver={(e) => e.preventDefault()}
-                  onDrop={(e) => {
-                    e.preventDefault()
-                    const f = e.dataTransfer.files[0]
-                    if (f) setAudioFile(f)
-                  }}
-                >
-                  {audioFile ? (
-                    <div className="audio-file-info">
-                      <span className="audio-icon">🎙️</span>
-                      <div>
-                        <p className="audio-name">{audioFile.name}</p>
-                        <p className="audio-size">{(audioFile.size / 1024 / 1024).toFixed(1)} MB</p>
-                      </div>
-                      <button
-                        className="remove-audio"
-                        onClick={(e) => { e.stopPropagation(); setAudioFile(null) }}
-                      >×</button>
-                    </div>
-                  ) : (
-                    <div className="audio-placeholder">
-                      <span>🎵</span>
-                      <p>Click or drag audio file here</p>
-                    </div>
-                  )}
-                  <input
-                    ref={audioRef}
-                    type="file"
-                    accept="audio/*"
-                    style={{ display: 'none' }}
-                    onChange={(e) => e.target.files[0] && setAudioFile(e.target.files[0])}
-                  />
-                </div>
-              </div>
             </div>
 
             {error && <p className="error-message">{error}</p>}
