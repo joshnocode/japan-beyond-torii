@@ -6,6 +6,11 @@
     "api/diagnose.js": {
       "maxDuration": 30
     },
+    "api/test-batch.js": {
+      "maxDuration": 120,
+      "memory": 3008,
+      "includeFiles": "node_modules/ffmpeg-static/**"
+    },
     "api/assemble-video.js": {
       "maxDuration": 300,
       "memory": 1024

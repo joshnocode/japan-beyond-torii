@@ -23,6 +23,8 @@ export default function AssemblyPanel({ project, scenes, onComplete, onAssemblyS
   const [elapsed, setElapsed] = useState(0)
   const [diagnosing, setDiagnosing] = useState(false)
   const [diagResult, setDiagResult] = useState(null)
+  const [testing, setTesting] = useState(false)
+  const [testResult, setTestResult] = useState(null)
 
   const startRef    = useRef(null)
   const pollStopRef = useRef(false)
@@ -184,6 +186,25 @@ export default function AssemblyPanel({ project, scenes, onComplete, onAssemblyS
     }
   }
 
+  const runTest = async () => {
+    setTesting(true)
+    setTestResult(null)
+    try {
+      const { data: { session } } = await supabase.auth.getSession()
+      const res = await fetch(`${API_BASE}/api/test-batch`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
+        body: JSON.stringify({ project_id: project.id }),
+      })
+      const json = await res.json()
+      setTestResult(json)
+    } catch (e) {
+      setTestResult({ success: false, error: e.message, log: [] })
+    } finally {
+      setTesting(false)
+    }
+  }
+
   const runDiagnose = async () => {
     setDiagnosing(true)
     setDiagResult(null)
@@ -309,14 +330,43 @@ export default function AssemblyPanel({ project, scenes, onComplete, onAssemblyS
 
       {!running && (
         <div style={{ marginTop: '12px' }}>
-          <button
-            className="btn-secondary"
-            onClick={runDiagnose}
-            disabled={diagnosing}
-            style={{ fontSize: '13px', padding: '6px 14px' }}
-          >
-            {diagnosing ? 'Diagnosing…' : '🔍 Diagnose'}
-          </button>
+          <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+            <button
+              className="btn-secondary"
+              onClick={runDiagnose}
+              disabled={diagnosing || testing}
+              style={{ fontSize: '13px', padding: '6px 14px' }}
+            >
+              {diagnosing ? 'Diagnosing…' : '🔍 Diagnose'}
+            </button>
+            <button
+              className="btn-secondary"
+              onClick={runTest}
+              disabled={testing || diagnosing}
+              style={{ fontSize: '13px', padding: '6px 14px' }}
+            >
+              {testing ? 'Testing… (~30s)' : '🧪 Test Pipeline'}
+            </button>
+          </div>
+          {testResult && (
+            <div style={{ marginTop: '10px' }}>
+              <div style={{ display: 'flex', gap: '8px', marginBottom: '6px' }}>
+                <span style={{ fontSize: '13px', fontWeight: 'bold', color: testResult.success ? '#4caf50' : '#f44336' }}>
+                  {testResult.success ? '✅ Pipeline OK' : '❌ Pipeline FAILED'}
+                </span>
+                <button
+                  className="btn-secondary"
+                  onClick={() => navigator.clipboard.writeText(JSON.stringify(testResult, null, 2))}
+                  style={{ fontSize: '13px', padding: '2px 10px' }}
+                >
+                  Copy
+                </button>
+              </div>
+              <pre style={{ fontSize: '11px', background: '#111', color: '#ccc', padding: '10px', borderRadius: '6px', overflowX: 'auto', whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
+                {testResult.log?.join('\n') || JSON.stringify(testResult, null, 2)}
+              </pre>
+            </div>
+          )}
           {diagResult && (
             <div style={{ marginTop: '10px' }}>
               <button
