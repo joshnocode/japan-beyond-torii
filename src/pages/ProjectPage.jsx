@@ -648,6 +648,11 @@ export default function ProjectPage() {
           ))}
         </div>
 
+        {/* ── Alignment report ── */}
+        {brief && scenes.length > 0 && (
+          <AlignmentReport brief={brief} sceneCount={scenes.length} />
+        )}
+
         {/* ── Collapsible brief ── */}
         {brief && (
           <details className="brief-detail-section">
@@ -841,5 +846,104 @@ function SceneCard({ scene, scriptExcerpt, isActive, activeAction, phase, idlePh
         </div>
       )}
     </>
+  )
+}
+
+// ── Alignment Report ───────────────────────────────────────────
+const CLIP_SEC = 5
+const WPM = 130
+
+function fmtSec(sec) {
+  const m = Math.floor(sec / 60)
+  const s = Math.round(sec % 60)
+  return `${m}:${String(s).padStart(2, '0')}`
+}
+
+function AlignmentReport({ brief, sceneCount }) {
+  const briefScenes = brief?.scenes || []
+  if (!briefScenes.length) return null
+
+  const wordCounts   = briefScenes.map(s => (s.script_excerpt || '').trim().split(/\s+/).filter(Boolean).length)
+  const totalWords   = wordCounts.reduce((a, b) => a + b, 0)
+  const audioDurSec  = (totalWords / WPM) * 60
+  const videoDurSec  = sceneCount * CLIP_SEC
+  const neededScenes = Math.ceil(audioDurSec / CLIP_SEC)
+  const drift        = videoDurSec - audioDurSec
+
+  const rows = []
+  let narCursor = 0
+  for (let i = 0; i < briefScenes.length; i++) {
+    const narStart   = narCursor
+    const narEnd     = narStart + (wordCounts[i] / totalWords) * audioDurSec
+    narCursor        = narEnd
+    rows.push({
+      i,
+      narStart, narEnd,
+      vidStart: i * CLIP_SEC,
+      vidEnd:   (i + 1) * CLIP_SEC,
+      sceneDrift: (i * CLIP_SEC) - narStart,
+      excerpt: briefScenes[i].script_excerpt || '',
+      isCut: (i + 1) * CLIP_SEC > audioDurSec,
+    })
+  }
+
+  const isGood = Math.abs(drift) < 5
+  const color  = isGood ? '#4caf50' : '#f44336'
+
+  return (
+    <details className="brief-detail-section">
+      <summary>Alignment Report</summary>
+      <div style={{ padding: '12px 0' }}>
+
+        <div style={{ background: isGood ? '#1a3a1a' : '#3a1a1a', border: `1px solid ${color}`, borderRadius: '8px', padding: '12px 16px', marginBottom: '16px' }}>
+          <p style={{ fontWeight: 'bold', color, marginBottom: '4px' }}>
+            {isGood ? '✅ Aligned'
+              : drift < 0 ? `⚠️ Video is ${fmtSec(Math.abs(drift))} shorter than narration — narration gets cut off`
+              : `⚠️ Video is ${fmtSec(drift)} longer than narration`}
+          </p>
+          <p style={{ fontSize: '13px', color: '#aaa', margin: 0 }}>
+            Video: {fmtSec(videoDurSec)} ({sceneCount} clips × {CLIP_SEC}s)
+            &nbsp;·&nbsp; Narration: ~{fmtSec(audioDurSec)} ({totalWords} words @ {WPM} wpm)
+            {!isGood && <span style={{ color: '#f9a825' }}>&nbsp;·&nbsp; Need {neededScenes} clips, have {sceneCount} → re-analyze to fix</span>}
+          </p>
+        </div>
+
+        <div style={{ overflowX: 'auto' }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
+            <thead>
+              <tr style={{ borderBottom: '1px solid #333', color: '#777', textAlign: 'left' }}>
+                <th style={{ padding: '6px 8px' }}>#</th>
+                <th style={{ padding: '6px 8px' }}>Video plays</th>
+                <th style={{ padding: '6px 8px' }}>Narration at that time</th>
+                <th style={{ padding: '6px 8px' }}>Drift</th>
+                <th style={{ padding: '6px 8px' }}>What's being said</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map(r => {
+                const abs = Math.abs(r.sceneDrift)
+                const dc  = abs < 2 ? '#4caf50' : abs < 8 ? '#f9a825' : '#f44336'
+                return (
+                  <tr key={r.i} style={{ borderBottom: '1px solid #222', background: r.isCut ? 'rgba(244,67,54,0.07)' : 'transparent' }}>
+                    <td style={{ padding: '6px 8px', color: '#888' }}>{r.i + 1}</td>
+                    <td style={{ padding: '6px 8px', whiteSpace: 'nowrap', fontFamily: 'monospace' }}>{fmtSec(r.vidStart)}–{fmtSec(r.vidEnd)}</td>
+                    <td style={{ padding: '6px 8px', whiteSpace: 'nowrap', fontFamily: 'monospace', color: '#aaa' }}>{fmtSec(r.narStart)}–{fmtSec(r.narEnd)}</td>
+                    <td style={{ padding: '6px 8px', whiteSpace: 'nowrap', fontFamily: 'monospace', color: dc }}>
+                      {Math.abs(r.sceneDrift) < 0.5 ? '✓' : r.sceneDrift > 0 ? `+${r.sceneDrift.toFixed(1)}s` : `${r.sceneDrift.toFixed(1)}s`}
+                      {r.isCut ? ' ✂️' : ''}
+                    </td>
+                    <td style={{ padding: '6px 8px', color: '#ccc', maxWidth: '240px' }}>
+                      <span style={{ display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
+                        "{r.excerpt}"
+                      </span>
+                    </td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </details>
   )
 }
