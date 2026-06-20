@@ -162,7 +162,7 @@ export default async function handler(req, res) {
 
     const message = await client.messages.create({
       model: 'claude-sonnet-4-6',
-      max_tokens: 8192,          // doubled — prevents truncation for scripts up to ~30 scenes
+      max_tokens: 32000,         // 33+ scenes with full prompts needs ~12-15k tokens; 32k gives headroom
       system: SYSTEM_PROMPT,
       messages: [{ role: 'user', content: `Analyze this script:\n\n${script}` }],
     })
