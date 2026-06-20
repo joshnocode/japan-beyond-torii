@@ -119,17 +119,29 @@ export default async function handler(req, res) {
     if (clipDuration) log.push(`[${ts()}] looping each clip to ${clipDuration.toFixed(2)}s`)
 
     // Encode each clip sequentially
-    log.push(`[${ts()}] encoding ${scenes.length} clips`)
+    log.push(`[${ts()}] encoding ${scenes.length} clips (ping-pong + scale)`)
     const scaledPaths = []
     for (const { scene_index, buf } of clips) {
-      const origPath  = join(jobDir, `orig_${scene_index}.mp4`)
+      const origPath   = join(jobDir, `orig_${scene_index}.mp4`)
+      const ppPath     = join(jobDir, `pp_${scene_index}.mp4`)
       const scaledPath = join(jobDir, `scaled_${scene_index}.mp4`)
       await writeFile(origPath, buf)
 
-      // -stream_loop -1 must precede -i so FFmpeg loops the source before decoding
+      // Step 1: forward + reverse = 10s ping-pong cycle that starts and ends at the same frame.
+      // The loop cut is invisible because position matches at both ends.
+      await run(ffmpeg, [
+        '-loglevel', 'error', '-i', origPath,
+        '-filter_complex', '[0:v]reverse[r];[0:v][r]concat=n=2:v=1:a=0[out]',
+        '-map', '[out]',
+        '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '34', '-an',
+        '-y', ppPath,
+      ])
+      await unlink(origPath)
+
+      // Step 2: loop the 10s ping-pong to fill the target duration and scale to 720p
       const args = ['-loglevel', 'error']
       if (clipDuration) args.push('-stream_loop', '-1')
-      args.push('-i', origPath,
+      args.push('-i', ppPath,
         '-vf', 'scale=720:-2',
         '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '34',
         '-maxrate', '1400k', '-bufsize', '2800k', '-an')
@@ -137,7 +149,7 @@ export default async function handler(req, res) {
       args.push('-y', scaledPath)
 
       await run(ffmpeg, args)
-      await unlink(origPath)
+      await unlink(ppPath)
       scaledPaths.push({ scene_index, path: scaledPath })
     }
     log.push(`[${ts()}] all clips encoded`)

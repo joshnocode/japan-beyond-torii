@@ -5,7 +5,7 @@ const SYSTEM_PROMPT = `You are a cinematic director for a Japanese historical do
 Your job is to analyze a narration script and break it into scenes for video production.
 
 Rules:
-- Split the script into scenes of 3-6 sentences each
+- Split the script into scenes of 2-4 sentences each
 - For each scene, generate a detailed FLUX image prompt in strict photorealistic documentary style
 - For each scene, generate a Seedance motion prompt specifying a physical 3D camera movement
 - Estimate duration assuming ~130 words per minute narration pace
