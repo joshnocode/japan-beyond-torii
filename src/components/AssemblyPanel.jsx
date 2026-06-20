@@ -21,6 +21,8 @@ export default function AssemblyPanel({ project, scenes, onComplete, onAssemblyS
   const [error, setError] = useState('')
   const [videoUrl, setVideoUrl] = useState(project.video_url || null)
   const [elapsed, setElapsed] = useState(0)
+  const [diagnosing, setDiagnosing] = useState(false)
+  const [diagResult, setDiagResult] = useState(null)
 
   const startRef    = useRef(null)
   const pollStopRef = useRef(false)
@@ -182,6 +184,25 @@ export default function AssemblyPanel({ project, scenes, onComplete, onAssemblyS
     }
   }
 
+  const runDiagnose = async () => {
+    setDiagnosing(true)
+    setDiagResult(null)
+    try {
+      const { data: { session } } = await supabase.auth.getSession()
+      const res = await fetch(`${API_BASE}/api/diagnose`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
+        body: JSON.stringify({ project_id: project.id }),
+      })
+      const json = await res.json()
+      setDiagResult(json)
+    } catch (e) {
+      setDiagResult({ error: e.message })
+    } finally {
+      setDiagnosing(false)
+    }
+  }
+
   // On mount: resume polling if assembly was in-flight (works across page reloads / app closes)
   useEffect(() => {
     if (videoUrl) return
@@ -283,6 +304,28 @@ export default function AssemblyPanel({ project, scenes, onComplete, onAssemblyS
         <div className="assembly-error-box">
           <p className="error-message assembly-error">{error}</p>
           <p className="assembly-error-hint">Screenshot this error and share it to help debug.</p>
+        </div>
+      )}
+
+      {!running && (
+        <div style={{ marginTop: '12px' }}>
+          <button
+            className="btn-secondary"
+            onClick={runDiagnose}
+            disabled={diagnosing}
+            style={{ fontSize: '13px', padding: '6px 14px' }}
+          >
+            {diagnosing ? 'Diagnosing…' : '🔍 Diagnose'}
+          </button>
+          {diagResult && (
+            <pre style={{
+              marginTop: '10px', fontSize: '11px', background: '#111',
+              color: '#ccc', padding: '10px', borderRadius: '6px',
+              overflowX: 'auto', whiteSpace: 'pre-wrap', wordBreak: 'break-all',
+            }}>
+              {JSON.stringify(diagResult, null, 2)}
+            </pre>
+          )}
         </div>
       )}
     </div>

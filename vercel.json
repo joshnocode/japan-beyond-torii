@@ -3,6 +3,9 @@
     { "source": "/(.*)", "destination": "/index.html" }
   ],
   "functions": {
+    "api/diagnose.js": {
+      "maxDuration": 30
+    },
     "api/assemble-video.js": {
       "maxDuration": 300,
       "memory": 1024
