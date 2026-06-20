@@ -157,14 +157,31 @@ export default async function handler(req, res) {
   const apiKey = process.env.ANTHROPIC_API_KEY || process.env.VITE_ANTHROPIC_API_KEY
   if (!apiKey) return res.status(500).json({ error: 'ANTHROPIC_API_KEY is not configured' })
 
+  // Pre-compute scene count server-side so Claude receives the exact target number.
+  // Strip non-spoken markers (---, ***, section dividers) before counting words.
+  const narrationWords = script.replace(/^[-*]{2,}\s*$/gm, '').trim().split(/\s+/).filter(Boolean).length
+  const estimatedDurSec = Math.round(narrationWords / 130 * 60)
+  const requiredSceneCount = Math.ceil(estimatedDurSec / 5)
+
   try {
     const client = new Anthropic({ apiKey })
 
+    const userMessage = [
+      `PRE-COMPUTED VALUES (do not recalculate — use these exactly):`,
+      `  spoken_word_count = ${narrationWords}`,
+      `  estimated_duration_seconds = ${estimatedDurSec}`,
+      `  scene_count = ${requiredSceneCount}  ← you MUST generate exactly ${requiredSceneCount} scenes`,
+      ``,
+      `Analyze this script:`,
+      ``,
+      script,
+    ].join('\n')
+
     const message = await client.messages.create({
       model: 'claude-sonnet-4-6',
-      max_tokens: 32000,         // 33+ scenes with full prompts needs ~12-15k tokens; 32k gives headroom
+      max_tokens: 32000,
       system: SYSTEM_PROMPT,
-      messages: [{ role: 'user', content: `Analyze this script:\n\n${script}` }],
+      messages: [{ role: 'user', content: userMessage }],
     })
 
     const raw = message.content[0].text

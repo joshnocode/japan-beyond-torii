@@ -89,7 +89,15 @@ export default function ProjectPage() {
       ])
       if (projErr || !proj) { setError('Project not found.'); setLoading(false); return }
       setProject(proj)
-      setScenes(sc || [])
+      // Deduplicate by scene_index (keep the most complete row per index)
+      const byIndex = new Map()
+      for (const s of (sc || [])) {
+        const existing = byIndex.get(s.scene_index)
+        if (!existing || (!existing.video_url && s.video_url) || (!existing.image_url && s.image_url)) {
+          byIndex.set(s.scene_index, s)
+        }
+      }
+      setScenes([...byIndex.values()].sort((a, b) => a.scene_index - b.scene_index))
     } catch (err) {
       setError('Failed to load project. Please refresh.')
     } finally {
