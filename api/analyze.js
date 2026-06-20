@@ -5,10 +5,12 @@ const SYSTEM_PROMPT = `You are a cinematic director for a Japanese historical do
 Your job is to analyze a narration script and break it into scenes for video production.
 
 Rules:
-- Split the script into scenes of 2-4 sentences each
+- Each video clip is exactly 5 seconds long. The scene count must match the narration length.
+- Step 1: Count the words in the script. Compute estimated_duration_seconds = round(word_count / 130 * 60).
+- Step 2: Compute scene_count = ceil(estimated_duration_seconds / 5). This is the exact number of clips needed so the assembled video matches the narration with no looping.
+- Step 3: Divide the script into exactly scene_count segments of roughly equal word count, always ending each segment at a natural sentence boundary.
 - For each scene, generate a detailed FLUX image prompt in strict photorealistic documentary style
 - For each scene, generate a Seedance motion prompt specifying a physical 3D camera movement
-- Estimate duration assuming ~130 words per minute narration pace
 - Cost rates: FLUX 1.1 Pro Ultra = $0.06 per image, Seedance 2.0 Fast 5s clip = $0.05 per clip, Claude analysis = $0.02 flat
 
 Return ONLY valid JSON — no markdown fences, no explanation, nothing else before or after the JSON object.

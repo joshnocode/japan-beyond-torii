@@ -85,71 +85,30 @@ export default async function handler(req, res) {
     ])
     log.push(`[${ts()}] downloads complete`)
 
-    // Write audio and probe its duration so we can loop clips to fill the narration
+    // Write audio
     let audioPath = null
-    let audioDuration = null
     if (audioBuf) {
       audioPath = join(jobDir, 'audio.mp3')
       await writeFile(audioPath, audioBuf)
       log.push(`[${ts()}] audio: ${(audioBuf.length / 1024 / 1024).toFixed(1)}MB`)
-
-      // Probe duration — ffmpeg -i with no output always prints file info to stderr
-      const probeOut = await new Promise((resolve) => {
-        execFile(ffmpeg, ['-i', audioPath],
-          { maxBuffer: 10 * 1024 * 1024 },
-          (_err, _out, stderr) => resolve(stderr || ''))
-      })
-      const m = probeOut.match(/Duration:\s*(\d+):(\d+):(\d+\.?\d*)/)
-      if (m) {
-        audioDuration = parseInt(m[1]) * 3600 + parseInt(m[2]) * 60 + parseFloat(m[3])
-        log.push(`[${ts()}] audio duration (probed): ${audioDuration.toFixed(1)}s`)
-      } else {
-        // Fallback: use the estimated duration stored in the brief
-        audioDuration = project.brief?.estimated_duration_seconds || null
-        log.push(audioDuration
-          ? `[${ts()}] audio duration (from brief): ${audioDuration}s`
-          : `[${ts()}] WARNING: could not detect audio duration — clips will not be looped`)
-        log.push(`[${ts()}] probe output: ${probeOut.slice(0, 500)}`)
-      }
     }
 
-    // Each clip is looped to fill its equal share of the narration.
-    // Without audio, clips play at their native 5s length.
-    const clipDuration = audioDuration ? audioDuration / scenes.length : null
-    if (clipDuration) log.push(`[${ts()}] looping each clip to ${clipDuration.toFixed(2)}s`)
-
-    // Encode each clip sequentially
-    log.push(`[${ts()}] encoding ${scenes.length} clips (ping-pong + scale)`)
+    // Encode each clip sequentially — no looping needed; scene count was calculated
+    // from script word count so total clip duration already matches narration length.
+    log.push(`[${ts()}] encoding ${scenes.length} clips`)
     const scaledPaths = []
     for (const { scene_index, buf } of clips) {
       const origPath   = join(jobDir, `orig_${scene_index}.mp4`)
-      const ppPath     = join(jobDir, `pp_${scene_index}.mp4`)
       const scaledPath = join(jobDir, `scaled_${scene_index}.mp4`)
       await writeFile(origPath, buf)
-
-      // Step 1: forward + reverse = 10s ping-pong cycle that starts and ends at the same frame.
-      // The loop cut is invisible because position matches at both ends.
       await run(ffmpeg, [
         '-loglevel', 'error', '-i', origPath,
-        '-filter_complex', '[0:v]reverse[r];[0:v][r]concat=n=2:v=1:a=0[out]',
-        '-map', '[out]',
-        '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '34', '-an',
-        '-y', ppPath,
-      ])
-      await unlink(origPath)
-
-      // Step 2: loop the 10s ping-pong to fill the target duration and scale to 720p
-      const args = ['-loglevel', 'error']
-      if (clipDuration) args.push('-stream_loop', '-1')
-      args.push('-i', ppPath,
         '-vf', 'scale=720:-2',
         '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '34',
-        '-maxrate', '1400k', '-bufsize', '2800k', '-an')
-      if (clipDuration) args.push('-t', clipDuration.toFixed(3))
-      args.push('-y', scaledPath)
-
-      await run(ffmpeg, args)
-      await unlink(ppPath)
+        '-maxrate', '1400k', '-bufsize', '2800k', '-an',
+        '-y', scaledPath,
+      ])
+      await unlink(origPath)
       scaledPaths.push({ scene_index, path: scaledPath })
     }
     log.push(`[${ts()}] all clips encoded`)
