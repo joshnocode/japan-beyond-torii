@@ -93,15 +93,23 @@ export default async function handler(req, res) {
       await writeFile(audioPath, audioBuf)
       log.push(`[${ts()}] audio: ${(audioBuf.length / 1024 / 1024).toFixed(1)}MB`)
 
+      // Probe duration — ffmpeg -i with no output always prints file info to stderr
       const probeOut = await new Promise((resolve) => {
-        execFile(ffmpeg, ['-i', audioPath, '-f', 'null', '-'],
+        execFile(ffmpeg, ['-i', audioPath],
           { maxBuffer: 10 * 1024 * 1024 },
           (_err, _out, stderr) => resolve(stderr || ''))
       })
       const m = probeOut.match(/Duration:\s*(\d+):(\d+):(\d+\.?\d*)/)
       if (m) {
         audioDuration = parseInt(m[1]) * 3600 + parseInt(m[2]) * 60 + parseFloat(m[3])
-        log.push(`[${ts()}] audio duration: ${audioDuration.toFixed(1)}s`)
+        log.push(`[${ts()}] audio duration (probed): ${audioDuration.toFixed(1)}s`)
+      } else {
+        // Fallback: use the estimated duration stored in the brief
+        audioDuration = project.brief?.estimated_duration_seconds || null
+        log.push(audioDuration
+          ? `[${ts()}] audio duration (from brief): ${audioDuration}s`
+          : `[${ts()}] WARNING: could not detect audio duration — clips will not be looped`)
+        log.push(`[${ts()}] probe output: ${probeOut.slice(0, 500)}`)
       }
     }
 
