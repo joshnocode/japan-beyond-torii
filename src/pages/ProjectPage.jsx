@@ -34,6 +34,8 @@ export default function ProjectPage() {
   const [currentAction, setCurrentAction] = useState('')
   const [avgSceneMs, setAvgSceneMs] = useState(null)
   const [elapsedSeconds, setElapsedSeconds] = useState(0)
+  const [generatingAudio, setGeneratingAudio] = useState(false)
+  const [audioError, setAudioError] = useState('')
 
   const activeRef     = useRef(false)
   const sceneTimesRef = useRef([])
@@ -411,6 +413,29 @@ export default function ProjectPage() {
     return retrySingleScene(scene)
   }, [retrySingleImage, retrySingleScene])
 
+  const generateAudio = async () => {
+    setGeneratingAudio(true)
+    setAudioError('')
+    try {
+      const { data: { session } } = await supabase.auth.getSession()
+      const res = await fetch(`${API_BASE}/api/generate-audio`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${session.access_token}`,
+        },
+        body: JSON.stringify({ project_id: id }),
+      })
+      const body = await res.json()
+      if (!res.ok || body.error) throw new Error(body.error || `Server error ${res.status}`)
+      patchProject({ audio_url: body.audio_url })
+    } catch (err) {
+      setAudioError(err.message || 'Audio generation failed')
+    } finally {
+      setGeneratingAudio(false)
+    }
+  }
+
   const handleDelete = async () => {
     if (!window.confirm(`Delete "${project.title || 'this project'}"? This cannot be undone.`)) return
     const prefix = `${project.user_id}/${project.id}`
@@ -558,9 +583,33 @@ export default function ProjectPage() {
         )}
 
 
-        {/* ── Audio upload ── */}
+        {/* ── Audio ── */}
         {['videos_ready', 'assembling'].includes(effectiveStatus) && !project.audio_url && phase === 'idle' && (
-          <AudioUploader project={project} onUploaded={url => patchProject({ audio_url: url })} />
+          <div className="audio-uploader-panel">
+            <div className="audio-uploader-header">
+              <div>
+                <p className="audio-uploader-title">Narration Audio</p>
+                <p className="audio-uploader-sub">Required before assembling the final video</p>
+              </div>
+            </div>
+            <button
+              className="btn-primary"
+              onClick={generateAudio}
+              disabled={generatingAudio}
+              style={{ alignSelf: 'flex-start' }}
+            >
+              {generatingAudio ? '⏳ Generating with Alfred…' : '🎙️ Generate Audio with Alfred'}
+            </button>
+            {audioError && <p className="error-message" style={{ marginTop: '8px' }}>{audioError}</p>}
+            <details style={{ marginTop: '14px' }}>
+              <summary style={{ fontSize: '13px', color: 'var(--text-muted)', cursor: 'pointer', userSelect: 'none' }}>
+                Or upload your own file
+              </summary>
+              <div style={{ marginTop: '10px' }}>
+                <AudioUploader project={project} onUploaded={url => patchProject({ audio_url: url })} />
+              </div>
+            </details>
+          </div>
         )}
 
         {/* ── Assembly ── */}

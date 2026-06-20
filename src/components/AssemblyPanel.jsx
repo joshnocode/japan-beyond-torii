@@ -319,7 +319,7 @@ export default function AssemblyPanel({ project, scenes, onComplete, onAssemblyS
             className="btn-primary"
             onClick={startAssembly}
             disabled={!hasAudio}
-            title={!hasAudio ? 'Upload your ElevenLabs audio file first' : undefined}
+            title={!hasAudio ? 'Generate or upload audio first' : undefined}
           >
             Assemble →
           </button>
@@ -328,7 +328,7 @@ export default function AssemblyPanel({ project, scenes, onComplete, onAssemblyS
 
       {!hasAudio && !running && (
         <p className="assembly-warning">
-          ⚠️ No audio file found. Upload your ElevenLabs audio before assembling.
+          ⚠️ No audio yet. Generate or upload audio before assembling.
         </p>
       )}
 
