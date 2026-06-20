@@ -895,17 +895,36 @@ function AlignmentReport({ brief, sceneCount }) {
       <summary>Alignment Report</summary>
       <div style={{ padding: '12px 0' }}>
 
-        <div style={{ background: isGood ? '#1a3a1a' : '#3a1a1a', border: `1px solid ${color}`, borderRadius: '8px', padding: '12px 16px', marginBottom: '16px' }}>
-          <p style={{ fontWeight: 'bold', color, marginBottom: '4px' }}>
-            {isGood ? '✅ Aligned'
-              : drift < 0 ? `⚠️ Video is ${fmtSec(Math.abs(drift))} shorter than narration — narration gets cut off`
-              : `⚠️ Video is ${fmtSec(drift)} longer than narration`}
-          </p>
-          <p style={{ fontSize: '13px', color: '#aaa', margin: 0 }}>
-            Video: {fmtSec(videoDurSec)} ({sceneCount} clips × {CLIP_SEC}s)
-            &nbsp;·&nbsp; Narration: ~{fmtSec(audioDurSec)} ({totalWords} words @ {WPM} wpm)
-            {!isGood && <span style={{ color: '#f9a825' }}>&nbsp;·&nbsp; Need {neededScenes} clips, have {sceneCount} → re-analyze to fix</span>}
-          </p>
+        <div style={{ background: isGood ? '#1a3a1a' : '#3a1a1a', border: `1px solid ${color}`, borderRadius: '8px', padding: '12px 16px', marginBottom: '16px', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '12px' }}>
+          <div>
+            <p style={{ fontWeight: 'bold', color, marginBottom: '4px' }}>
+              {isGood ? '✅ Aligned'
+                : drift < 0 ? `⚠️ Video is ${fmtSec(Math.abs(drift))} shorter than narration — narration gets cut off`
+                : `⚠️ Video is ${fmtSec(drift)} longer than narration`}
+            </p>
+            <p style={{ fontSize: '13px', color: '#aaa', margin: 0 }}>
+              Video: {fmtSec(videoDurSec)} ({sceneCount} clips × {CLIP_SEC}s)
+              &nbsp;·&nbsp; Narration: ~{fmtSec(audioDurSec)} ({totalWords} words @ {WPM} wpm)
+              {!isGood && <span style={{ color: '#f9a825' }}>&nbsp;·&nbsp; Need {neededScenes} clips, have {sceneCount} → re-analyze to fix</span>}
+            </p>
+          </div>
+          <button
+            className="btn-secondary"
+            style={{ fontSize: '12px', padding: '4px 12px', flexShrink: 0 }}
+            onClick={() => {
+              const header = `ALIGNMENT REPORT\nVideo: ${fmtSec(videoDurSec)} (${sceneCount} clips × ${CLIP_SEC}s) | Narration: ~${fmtSec(audioDurSec)} (${totalWords} words @ ${WPM}wpm) | Need: ${neededScenes} clips\n\n`
+              const tableHeader = `Scene | Video       | Narration   | Drift  | Excerpt\n${'─'.repeat(90)}\n`
+              const tableRows = rows.map(r => {
+                const drift = Math.abs(r.sceneDrift) < 0.5 ? '✓     ' : r.sceneDrift > 0 ? `+${r.sceneDrift.toFixed(1)}s ` : `${r.sceneDrift.toFixed(1)}s `
+                const cut = r.isCut ? ' ✂️' : ''
+                const excerpt = r.excerpt.slice(0, 60) + (r.excerpt.length > 60 ? '…' : '')
+                return `${String(r.i + 1).padStart(5)} | ${fmtSec(r.vidStart)}–${fmtSec(r.vidEnd)} | ${fmtSec(r.narStart)}–${fmtSec(r.narEnd)} | ${drift}${cut} | "${excerpt}"`
+              }).join('\n')
+              navigator.clipboard.writeText(header + tableHeader + tableRows)
+            }}
+          >
+            Copy
+          </button>
         </div>
 
         <div style={{ overflowX: 'auto' }}>
