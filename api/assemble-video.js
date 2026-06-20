@@ -85,29 +85,55 @@ export default async function handler(req, res) {
     ])
     log.push(`[${ts()}] downloads complete`)
 
-    // Write audio
+    // Write audio and probe duration for safety-net loop calculation
     let audioPath = null
+    let audioDurSec = null
     if (audioBuf) {
       audioPath = join(jobDir, 'audio.mp3')
       await writeFile(audioPath, audioBuf)
       log.push(`[${ts()}] audio: ${(audioBuf.length / 1024 / 1024).toFixed(1)}MB`)
+
+      const probeOut = await new Promise(resolve =>
+        execFile(ffmpeg, ['-i', audioPath], { maxBuffer: 10 * 1024 * 1024 },
+          (_e, _o, stderr) => resolve(stderr || ''))
+      )
+      const m = probeOut.match(/Duration:\s*(\d+):(\d+):(\d+\.?\d*)/)
+      if (m) {
+        audioDurSec = parseInt(m[1]) * 3600 + parseInt(m[2]) * 60 + parseFloat(m[3])
+        log.push(`[${ts()}] audio duration: ${audioDurSec.toFixed(1)}s`)
+      } else {
+        audioDurSec = project.brief?.estimated_duration_seconds || null
+        log.push(`[${ts()}] audio duration (brief fallback): ${audioDurSec}s`)
+      }
     }
 
-    // Encode each clip sequentially — no looping needed; scene count was calculated
-    // from script word count so total clip duration already matches narration length.
+    // Safety net: if clips total less than 90% of audio duration, loop each clip
+    // proportionally so narration isn't cut off (ideally scene_count is correct and
+    // clipDuration stays at 5s).
+    const videoDurSec = scenes.length * 5
+    const clipDuration = (audioDurSec && audioDurSec > videoDurSec * 1.1)
+      ? audioDurSec / scenes.length
+      : null
+    if (clipDuration) log.push(`[${ts()}] safety-net: looping each clip to ${clipDuration.toFixed(2)}s (video ${videoDurSec}s < audio ${audioDurSec?.toFixed(1)}s)`)
+
+    // Encode each clip sequentially
     log.push(`[${ts()}] encoding ${scenes.length} clips`)
     const scaledPaths = []
     for (const { scene_index, buf } of clips) {
       const origPath   = join(jobDir, `orig_${scene_index}.mp4`)
       const scaledPath = join(jobDir, `scaled_${scene_index}.mp4`)
       await writeFile(origPath, buf)
-      await run(ffmpeg, [
-        '-loglevel', 'error', '-i', origPath,
+
+      const args = ['-loglevel', 'error']
+      if (clipDuration) args.push('-stream_loop', '-1')
+      args.push('-i', origPath,
         '-vf', 'scale=720:-2',
         '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '34',
-        '-maxrate', '1400k', '-bufsize', '2800k', '-an',
-        '-y', scaledPath,
-      ])
+        '-maxrate', '1400k', '-bufsize', '2800k', '-an')
+      if (clipDuration) args.push('-t', clipDuration.toFixed(3))
+      args.push('-y', scaledPath)
+
+      await run(ffmpeg, args)
       await unlink(origPath)
       scaledPaths.push({ scene_index, path: scaledPath })
     }
