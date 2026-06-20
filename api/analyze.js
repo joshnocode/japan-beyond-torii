@@ -6,8 +6,8 @@ Your job is to analyze a narration script and break it into scenes for video pro
 
 Rules:
 - Split the script into scenes of 3-6 sentences each
-- For each scene, generate a detailed FLUX image prompt: architectural illustration style, cinematic composition, feudal Japanese setting, dramatic lighting, and specific visual elements mentioned in that scene
-- For each scene, generate a Seedance motion prompt: slow cinematic camera movement (dolly, pan, parallax, push-in, pull-back, etc.) that suits the emotional tone
+- For each scene, generate a detailed FLUX image prompt in strict photorealistic documentary style
+- For each scene, generate a Seedance motion prompt specifying a physical 3D camera movement
 - Estimate duration assuming ~130 words per minute narration pace
 - Cost rates: FLUX 1.1 Pro Ultra = $0.06 per image, Seedance 2.0 Fast 5s clip = $0.05 per clip, Claude analysis = $0.02 flat
 
@@ -24,8 +24,8 @@ JSON structure:
       "scene_number": 1,
       "script_excerpt": "the exact sentences from the script assigned to this scene",
       "description": "1-2 sentence visual description of what the viewer sees",
-      "image_prompt": "detailed FLUX prompt — specify: architectural illustration style, ink and watercolor texture, feudal Japanese architecture/landscape, cinematic composition rule (rule of thirds / leading lines / etc.), lighting quality (golden hour / moonlight / dramatic overcast), specific props and environmental details from the scene content",
-      "motion_prompt": "Seedance motion description — specify camera move type, speed (slow/very slow), direction, and what element the camera is drawn toward"
+      "image_prompt": "Photorealistic FLUX prompt — style MUST be: photorealistic, 8K cinematic photography, National Geographic documentary style, tangible real-world textures (aged wood grain, mossy stone, worn fabric). Specify exact architectural or landscape subject (feudal Japanese castle walls, cedar forest path, wooden merchant house, mountain shrine gate). Add lighting quality (golden hour side-light, overcast diffused, blue-hour glow, lantern-lit interior). Apply a composition rule (rule of thirds, leading lines, foreground frame). Include specific environmental details from the scene narration. CRITICAL — NEVER include: anime, illustration, cartoon, painting, watercolor, ink, sketch, cel-shaded, drawing, comic book, digital art, stylized, flat, 2D. NEVER depict text, writing, maps, scrolls, or documents — if the script mentions a map or document, show the physical environment instead (a dimly lit study room, hands resting on a table, a candlelit chamber).",
+      "motion_prompt": "Seedance 3D camera movement — MUST describe a physical camera action, not a digital zoom. Choose one: slow dolly forward through [specific architectural element], aerial drone descent over [landmark or landscape], low-angle tracking shot following [subject or path], sweeping crane reveal of [vista], parallax push past [foreground object] revealing [background], steadicam walk through [interior or street]. Specify speed (slow / very slow) and the exact subject the camera approaches or reveals. The shot must feel like live-action cinematography, not animation."
     }
   ],
   "cost_estimate": {

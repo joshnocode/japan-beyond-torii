@@ -22,6 +22,7 @@ export default async function handler(req, res) {
     const result = await fal.subscribe('fal-ai/flux-pro/v1.1-ultra', {
       input: {
         prompt: image_prompt,
+        negative_prompt: 'anime, illustration, cartoon, painting, watercolor, ink, sketch, cel-shaded, drawing, comic book, digital art, stylized, flat, 2D, text, writing, maps, documents, scrolls, letters, captions, signs with text',
         aspect_ratio: '9:16',
         output_format: 'jpeg',
         safety_tolerance: '2',
