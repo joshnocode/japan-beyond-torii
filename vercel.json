@@ -3,6 +3,9 @@
     { "source": "/(.*)", "destination": "/index.html" }
   ],
   "functions": {
+    "api/analyze.js": {
+      "maxDuration": 300
+    },
     "api/diagnose.js": {
       "maxDuration": 30
     },

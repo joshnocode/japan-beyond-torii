@@ -1,5 +1,7 @@
 import Anthropic from '@anthropic-ai/sdk'
 
+export const maxDuration = 300
+
 const SYSTEM_PROMPT = `You are a cinematic director for a Japanese historical documentary channel called Japan Beyond The Torii.
 
 Your job is to analyze a narration script and break it into scenes for video production.
@@ -177,14 +179,15 @@ export default async function handler(req, res) {
       script,
     ].join('\n')
 
-    const message = await client.messages.create({
+    // Use streaming to bypass the SDK's "streaming required for long ops" guard
+    // and to keep the Vercel connection alive during generation.
+    const stream = client.messages.stream({
       model: 'claude-sonnet-4-6',
-      max_tokens: 32000,
+      max_tokens: 16000,
       system: SYSTEM_PROMPT,
       messages: [{ role: 'user', content: userMessage }],
     })
-
-    const raw = message.content[0].text
+    const raw = await stream.finalText()
     const brief = parseResponse(raw)
 
     if (!brief.scenes?.length) {
