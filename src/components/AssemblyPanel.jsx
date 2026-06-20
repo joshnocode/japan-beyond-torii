@@ -259,6 +259,29 @@ export default function AssemblyPanel({ project, scenes, onComplete, onAssemblyS
     }
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
+  const [downloading, setDownloading] = useState(false)
+
+  const handleDownload = async () => {
+    setDownloading(true)
+    try {
+      const resp = await fetch(videoUrl)
+      const blob = await resp.blob()
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = 'japan-beyond-torii.mp4'
+      document.body.appendChild(a)
+      a.click()
+      document.body.removeChild(a)
+      setTimeout(() => URL.revokeObjectURL(url), 5000)
+    } catch {
+      // Fallback: open in new tab so user can save manually
+      window.open(videoUrl, '_blank')
+    } finally {
+      setDownloading(false)
+    }
+  }
+
   if (videoUrl) {
     return (
       <div className="assembly-done-panel">
@@ -270,15 +293,13 @@ export default function AssemblyPanel({ project, scenes, onComplete, onAssemblyS
           </div>
         </div>
         <video src={videoUrl} controls playsInline className="final-video-preview" />
-        <a
-          href={videoUrl}
-          download="japan-beyond-torii.mp4"
-          target="_blank"
-          rel="noreferrer"
+        <button
+          onClick={handleDownload}
+          disabled={downloading}
           className="btn-primary btn-download"
         >
-          ↓ Download MP4
-        </a>
+          {downloading ? 'Preparing download…' : '↓ Download MP4'}
+        </button>
       </div>
     )
   }
