@@ -318,13 +318,22 @@ export default function AssemblyPanel({ project, scenes, onComplete, onAssemblyS
             {diagnosing ? 'Diagnosing…' : '🔍 Diagnose'}
           </button>
           {diagResult && (
-            <pre style={{
-              marginTop: '10px', fontSize: '11px', background: '#111',
-              color: '#ccc', padding: '10px', borderRadius: '6px',
-              overflowX: 'auto', whiteSpace: 'pre-wrap', wordBreak: 'break-all',
-            }}>
-              {JSON.stringify(diagResult, null, 2)}
-            </pre>
+            <div style={{ marginTop: '10px' }}>
+              <button
+                className="btn-secondary"
+                onClick={() => navigator.clipboard.writeText(JSON.stringify(diagResult, null, 2))}
+                style={{ fontSize: '13px', padding: '6px 14px', marginBottom: '6px' }}
+              >
+                Copy JSON
+              </button>
+              <pre style={{
+                fontSize: '11px', background: '#111',
+                color: '#ccc', padding: '10px', borderRadius: '6px',
+                overflowX: 'auto', whiteSpace: 'pre-wrap', wordBreak: 'break-all',
+              }}>
+                {JSON.stringify(diagResult, null, 2)}
+              </pre>
+            </div>
           )}
         </div>
       )}
