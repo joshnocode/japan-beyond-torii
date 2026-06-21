@@ -219,6 +219,7 @@ export default function NewProjectPage() {
             {error && <p className="error-message">{error}</p>}
 
             <button
+              type="button"
               className="btn-primary btn-analyze"
               onClick={handleAnalyze}
               disabled={!script.trim() || phase === 'analyzing'}
@@ -236,8 +237,8 @@ export default function NewProjectPage() {
                 <p className="brief-subtitle">Pre-Generation Brief · Review before spending</p>
               </div>
               <div className="brief-actions">
-                <button className="btn-ghost" onClick={handleCancel}>Edit Script</button>
-                <button className="btn-primary" onClick={handleConfirm}>
+                <button type="button" className="btn-ghost" onClick={handleCancel}>Edit Script</button>
+                <button type="button" className="btn-primary" onClick={handleConfirm}>
                   Confirm &amp; Generate →
                 </button>
               </div>
@@ -319,8 +320,8 @@ export default function NewProjectPage() {
             </div>
 
             <div className="brief-footer">
-              <button className="btn-ghost" onClick={handleCancel}>Edit Script</button>
-              <button className="btn-primary" onClick={handleConfirm}>
+              <button type="button" className="btn-ghost" onClick={handleCancel}>Edit Script</button>
+              <button type="button" className="btn-primary" onClick={handleConfirm}>
                 Confirm &amp; Generate →
               </button>
             </div>
