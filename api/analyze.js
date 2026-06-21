@@ -175,6 +175,7 @@ function closeOpenStructures(str) {
   const stack = []   // expected closing tokens
   let inStr = false
   let esc   = false
+  let firstCompleteAt = -1  // index after the char that empties the stack
 
   for (let i = 0; i < str.length; i++) {
     const ch = str[i]
@@ -190,10 +191,18 @@ function closeOpenStructures(str) {
     if (ch === '"') { inStr = true; continue }
     if (ch === '{') { stack.push('}'); continue }
     if (ch === '[') { stack.push(']'); continue }
-    if ((ch === '}' || ch === ']') && stack.length) stack.pop()
+    if ((ch === '}' || ch === ']') && stack.length) {
+      stack.pop()
+      if (stack.length === 0 && firstCompleteAt < 0) firstCompleteAt = i + 1
+    }
   }
 
-  if (stack.length === 0) return str  // already balanced
+  // JSON was complete but Claude appended trailing text — strip it
+  if (stack.length === 0 && firstCompleteAt > 0 && firstCompleteAt < str.length) {
+    return str.slice(0, firstCompleteAt)
+  }
+
+  if (stack.length === 0) return str  // already balanced, nothing to fix
 
   let out = str
   // Close an open string literal first
