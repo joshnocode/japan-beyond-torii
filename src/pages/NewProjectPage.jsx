@@ -67,13 +67,19 @@ export default function NewProjectPage() {
   const [phase, setPhase] = useState('input') // input | analyzing | brief | saving
   const [brief, setBrief] = useState(null)
   const [error, setError] = useState('')
+  const [debugInfo, setDebugInfo] = useState(null)
 
   const wordCount = script.trim().split(/\s+/).filter(Boolean).length
 
   const handleAnalyze = async () => {
     if (!script.trim()) return setError('Please paste your script first.')
     setError('')
+    setDebugInfo(null)
     setPhase('analyzing')
+
+    let httpStatus = null
+    let rawBody = null
+    const t0 = Date.now()
 
     try {
       const res = await fetch(`${API_BASE}/api/analyze`, {
@@ -81,21 +87,28 @@ export default function NewProjectPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ script }),
       })
+      httpStatus = res.status
+      rawBody = await res.text()
 
       if (!res.ok) {
         let msg = `Server error ${res.status}`
-        try {
-          const body = await res.json()
-          msg = body.error || body.message || msg
-        } catch {}
+        try { msg = JSON.parse(rawBody).error || JSON.parse(rawBody).message || msg } catch {}
         throw new Error(msg)
       }
 
-      const data = await res.json()
+      const data = JSON.parse(rawBody)
       if (!title.trim() && data.title) setTitle(data.title)
       setBrief(data)
       setPhase('brief')
     } catch (err) {
+      const elapsed = ((Date.now() - t0) / 1000).toFixed(1)
+      setDebugInfo({
+        timestamp: new Date().toISOString(),
+        elapsed_sec: elapsed,
+        http_status: httpStatus,
+        error_message: err.message,
+        raw_body: rawBody ? rawBody.slice(0, 4000) : null,
+      })
       setError(err.message)
       setPhase('input')
     }
@@ -221,6 +234,22 @@ export default function NewProjectPage() {
             </div>
 
             {error && <p className="error-message">{error}</p>}
+
+            {debugInfo && (
+              <details className="debug-panel">
+                <summary>Inspect error →</summary>
+                <div className="debug-body">
+                  <button
+                    type="button"
+                    className="debug-copy-btn"
+                    onClick={() => navigator.clipboard.writeText(JSON.stringify(debugInfo, null, 2))}
+                  >
+                    Copy JSON
+                  </button>
+                  <pre className="debug-pre">{JSON.stringify(debugInfo, null, 2)}</pre>
+                </div>
+              </details>
+            )}
 
             <button
               type="button"

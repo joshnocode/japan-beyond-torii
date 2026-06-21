@@ -155,6 +155,47 @@ h1, h2, h3, h4 {
   border-radius: var(--radius);
 }
 
+/* ─── Debug Inspect Panel ────────────────────────────────────── */
+.debug-panel {
+  margin-top: 8px;
+  border: 1px solid rgba(255, 200, 0, 0.25);
+  border-radius: var(--radius);
+  background: rgba(255, 200, 0, 0.04);
+  font-size: 0.8rem;
+}
+.debug-panel summary {
+  padding: 8px 12px;
+  cursor: pointer;
+  color: rgba(255, 200, 0, 0.7);
+  user-select: none;
+}
+.debug-body {
+  padding: 8px 12px 12px;
+  position: relative;
+}
+.debug-copy-btn {
+  position: absolute;
+  top: 8px;
+  right: 12px;
+  font-size: 0.75rem;
+  padding: 3px 10px;
+  background: rgba(255, 200, 0, 0.15);
+  border: 1px solid rgba(255, 200, 0, 0.3);
+  border-radius: 4px;
+  color: rgba(255, 200, 0, 0.8);
+  cursor: pointer;
+}
+.debug-pre {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-all;
+  font-family: monospace;
+  font-size: 0.72rem;
+  color: rgba(255,255,255,0.55);
+  max-height: 300px;
+  overflow-y: auto;
+}
+
 /* ─── Login Page ────────────────────────────────────────────── */
 .login-page {
   min-height: 100dvh;
