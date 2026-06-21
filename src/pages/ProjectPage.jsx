@@ -858,9 +858,6 @@ function SceneCard({ scene, scriptExcerpt, isActive, activeAction, phase, idlePh
 }
 
 // ── Alignment Report ───────────────────────────────────────────
-const CLIP_SEC = 5
-const WPM = 130
-
 function fmtSec(sec) {
   const m = Math.floor(sec / 60)
   const s = Math.round(sec % 60)
@@ -871,99 +868,88 @@ function AlignmentReport({ brief, sceneCount }) {
   const briefScenes = brief?.scenes || []
   if (!briefScenes.length) return null
 
-  // Narration duration comes from the server's pre-computed value (authoritative).
-  const audioDurSec = brief.estimated_duration_seconds || 0
-  const totalScenes = briefScenes.length          // scenes that have prompts
-  const missingClips = totalScenes - sceneCount   // prompts without video yet
-
-  // Use director-assigned duration_sec per scene; fall back to equal split.
-  const fallbackDur = totalScenes > 0 ? audioDurSec / totalScenes : CLIP_SEC
-  const hasDirDurations = briefScenes.some(s => s.duration_sec > 0)
+  const audioDurSec  = brief.estimated_duration_seconds || 0
+  const totalScenes  = briefScenes.length
+  const missingClips = totalScenes - sceneCount
 
   let cursor = 0
   const rows = briefScenes.map((s, i) => {
-    const dur = hasDirDurations ? (s.duration_sec || fallbackDur) : fallbackDur
-    const row = {
-      i,
-      dur,
-      narStart: cursor,
-      narEnd:   cursor + dur,
-      vidStart: cursor,
-      vidEnd:   cursor + dur,
-      excerpt:  s.script_excerpt || '',
-      hasVideo: i < sceneCount,
-    }
+    const dur   = s.duration_sec || 0
+    const words = Math.max(1, (s.script_excerpt || '').split(/\s+/).filter(Boolean).length)
+    const row   = { i, dur, words, start: cursor, end: cursor + dur, excerpt: s.script_excerpt || '', hasVideo: i < sceneCount }
     cursor += dur
     return row
   })
-  const videoDurSec = rows.slice(0, sceneCount).reduce((s, r) => s + r.dur, 0)
+
   const totalVideoDurSec = cursor
-  const avgClipDur = totalScenes > 0 ? totalVideoDurSec / totalScenes : CLIP_SEC
+  const videoDurSec      = rows.slice(0, sceneCount).reduce((s, r) => s + r.dur, 0)
+  const totalWords       = rows.reduce((n, r) => n + r.words, 0)
+  const effectiveWpm     = audioDurSec > 0 ? Math.round(totalWords / audioDurSec * 60) : 0
 
   const isGood = missingClips <= 0
   const color  = isGood ? '#4caf50' : '#f44336'
+
+  const copyReport = () => {
+    const summary = [
+      `ALIGNMENT REPORT`,
+      `Clips: ${sceneCount}/${totalScenes} ready | Total: ${fmtSec(totalVideoDurSec)} | Narration: ~${fmtSec(audioDurSec)} | Missing: ${missingClips}`,
+      `Words: ${totalWords} | Pace: ~${effectiveWpm} WPM`,
+      '',
+      `${'#'.padStart(5)} | ${'Dur'.padEnd(5)} | ${'Words'.padEnd(5)} | ${'Timeline'.padEnd(11)} | ${'Ready'.padEnd(7)} | Narration excerpt`,
+      '─'.repeat(100),
+    ]
+    const tableRows = rows.map(r => {
+      const timeline = `${fmtSec(r.start)}–${fmtSec(r.end)}`
+      const status   = r.hasVideo ? '✓      ' : 'pending'
+      return `${String(r.i + 1).padStart(5)} | ${String(r.dur + 's').padEnd(5)} | ${String(r.words).padEnd(5)} | ${timeline.padEnd(11)} | ${status} | "${r.excerpt}"`
+    })
+    navigator.clipboard.writeText([...summary, ...tableRows].join('\n'))
+  }
 
   return (
     <details className="brief-detail-section">
       <summary>Alignment Report</summary>
       <div style={{ padding: '12px 0' }}>
 
+        {/* ── Summary banner ── */}
         <div style={{ background: isGood ? '#1a3a1a' : '#3a1a1a', border: `1px solid ${color}`, borderRadius: '8px', padding: '12px 16px', marginBottom: '16px', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '12px' }}>
           <div>
             <p style={{ fontWeight: 'bold', color, marginBottom: '4px' }}>
               {isGood
-                ? `✅ Aligned — ${totalScenes} clips totaling ${fmtSec(totalVideoDurSec)} ≈ ${fmtSec(audioDurSec)}`
-                : `⚠️ ${missingClips} clip${missingClips !== 1 ? 's' : ''} still pending — ${fmtSec(videoDurSec)} of ${fmtSec(audioDurSec)} narration covered`}
+                ? `✅ ${totalScenes} clips · ${fmtSec(totalVideoDurSec)} total ≈ ${fmtSec(audioDurSec)} narration`
+                : `⚠️ ${missingClips} clip${missingClips !== 1 ? 's' : ''} pending — ${fmtSec(videoDurSec)} of ${fmtSec(audioDurSec)} covered`}
             </p>
             <p style={{ fontSize: '13px', color: '#aaa', margin: 0 }}>
-              Variable durations (avg ~{avgClipDur.toFixed(1)}s) &nbsp;·&nbsp; {sceneCount}/{totalScenes} clips ready &nbsp;·&nbsp; Narration: ~{fmtSec(audioDurSec)}
+              {totalWords} words &nbsp;·&nbsp; ~{effectiveWpm} WPM &nbsp;·&nbsp; {sceneCount}/{totalScenes} clips ready
             </p>
           </div>
-          <button
-            className="btn-secondary"
-            style={{ fontSize: '12px', padding: '4px 12px', flexShrink: 0 }}
-            onClick={() => {
-              const header = `ALIGNMENT REPORT\nVideo: ${fmtSec(videoDurSec)} (${sceneCount}/${totalScenes} clips ready, avg ~${avgClipDur.toFixed(1)}s) | Narration: ~${fmtSec(audioDurSec)} | Missing: ${missingClips} clips\n\n`
-              const tableHeader = `Scene | Video       | Narration   | Drift  | Excerpt\n${'─'.repeat(90)}\n`
-              const tableRows = rows.map(r => {
-                const status = r.hasVideo ? '✓      ' : 'pending'
-                const excerpt = r.excerpt.slice(0, 60) + (r.excerpt.length > 60 ? '…' : '')
-                return `${String(r.i + 1).padStart(5)} | ${fmtSec(r.vidStart)}–${fmtSec(r.vidEnd)} | ${fmtSec(r.narStart)}–${fmtSec(r.narEnd)} | ${status} | "${excerpt}"`
-              }).join('\n')
-              navigator.clipboard.writeText(header + tableHeader + tableRows)
-            }}
-          >
+          <button type="button" className="btn-secondary" style={{ fontSize: '12px', padding: '4px 12px', flexShrink: 0 }} onClick={copyReport}>
             Copy
           </button>
         </div>
 
+        {/* ── Table ── */}
         <div style={{ overflowX: 'auto' }}>
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
             <thead>
               <tr style={{ borderBottom: '1px solid #333', color: '#777', textAlign: 'left' }}>
-                <th style={{ padding: '6px 8px' }}>#</th>
-                <th style={{ padding: '6px 8px' }}>Dur</th>
-                <th style={{ padding: '6px 8px' }}>Video plays</th>
-                <th style={{ padding: '6px 8px' }}>Narration</th>
-                <th style={{ padding: '6px 8px' }}>Status</th>
-                <th style={{ padding: '6px 8px' }}>What's being said</th>
+                <th style={{ padding: '6px 8px', whiteSpace: 'nowrap' }}>#</th>
+                <th style={{ padding: '6px 8px', whiteSpace: 'nowrap' }}>Dur</th>
+                <th style={{ padding: '6px 8px', whiteSpace: 'nowrap' }}>Words</th>
+                <th style={{ padding: '6px 8px', whiteSpace: 'nowrap' }}>Timeline</th>
+                <th style={{ padding: '6px 8px', whiteSpace: 'nowrap' }}>Ready</th>
+                <th style={{ padding: '6px 8px' }}>Narration excerpt</th>
               </tr>
             </thead>
             <tbody>
               {rows.map(r => (
-                <tr key={r.i} style={{ borderBottom: '1px solid #222', background: r.hasVideo ? 'transparent' : 'rgba(255,200,0,0.04)' }}>
+                <tr key={r.i} style={{ borderBottom: '1px solid #222', background: r.hasVideo ? 'transparent' : 'rgba(255,200,0,0.04)', verticalAlign: 'top' }}>
                   <td style={{ padding: '6px 8px', color: '#888' }}>{r.i + 1}</td>
-                  <td style={{ padding: '6px 8px', whiteSpace: 'nowrap', fontFamily: 'monospace', color: 'rgba(201,168,76,0.7)' }}>{r.dur}s</td>
-                  <td style={{ padding: '6px 8px', whiteSpace: 'nowrap', fontFamily: 'monospace' }}>{fmtSec(r.vidStart)}–{fmtSec(r.vidEnd)}</td>
-                  <td style={{ padding: '6px 8px', whiteSpace: 'nowrap', fontFamily: 'monospace', color: '#aaa' }}>{fmtSec(r.narStart)}–{fmtSec(r.narEnd)}</td>
-                  <td style={{ padding: '6px 8px', whiteSpace: 'nowrap', color: r.hasVideo ? '#4caf50' : '#f9a825' }}>
-                    {r.hasVideo ? '✓' : 'pending'}
-                  </td>
-                  <td style={{ padding: '6px 8px', color: '#ccc', maxWidth: '240px' }}>
-                    <span style={{ display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
-                      "{r.excerpt}"
-                    </span>
-                  </td>
+                  <td style={{ padding: '6px 8px', whiteSpace: 'nowrap', fontFamily: 'monospace', color: 'rgba(201,168,76,0.8)' }}>{r.dur}s</td>
+                  <td style={{ padding: '6px 8px', whiteSpace: 'nowrap', fontFamily: 'monospace', color: '#888' }}>{r.words}w</td>
+                  <td style={{ padding: '6px 8px', whiteSpace: 'nowrap', fontFamily: 'monospace', color: '#ccc' }}>{fmtSec(r.start)}–{fmtSec(r.end)}</td>
+                  <td style={{ padding: '6px 8px', whiteSpace: 'nowrap', color: r.hasVideo ? '#4caf50' : '#f9a825' }}>{r.hasVideo ? '✓' : '…'}</td>
+                  <td style={{ padding: '6px 8px', color: '#bbb', maxWidth: '320px' }}>"{r.excerpt}"</td>
                 </tr>
               ))}
             </tbody>
