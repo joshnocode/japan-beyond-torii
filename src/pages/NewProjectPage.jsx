@@ -5,59 +5,31 @@ import { useAuth } from '../hooks/useAuth'
 
 const API_BASE = import.meta.env.DEV ? 'http://localhost:3000' : ''
 
-const TAKAYAMA_SCRIPT = `In 1692, the most powerful government in Japanese history did something it almost never did.
+const TAKAYAMA_SCRIPT = `In 1692, the Tokugawa Shogunate did something it almost never did.
 
-It reached into a remote mountain valley — deep in the Japanese Alps — and seized direct control of a city.
+It reached deep into the Japanese Alps and seized direct control of Takayama.
 
 Not because the city was weak.
 
-Because it was too powerful to leave alone.
+Because it was too valuable to leave alone.
 
----
+Takayama sat in the isolated mountains of Hida Province, surrounded by forests that produced some of the finest building timber in Japan. The region was also home to the legendary Hida carpenters — master craftsmen so skilled they were called upon to build temples, shrines, and palaces across the country.
 
-Takayama sits in Hida Province — one of the most geographically isolated regions in all of Japan.
+Then disaster struck.
 
-For centuries, that isolation was its armor. The mountains were so severe, so unforgiving, that no army ever successfully conquered this place.
+In 1657, the Great Meireki Fire devastated Edo, destroying much of the city. Rebuilding required enormous quantities of timber.
 
-But isolation alone doesn't explain why Takayama was wealthy. The mountains did.
+The Shogunate knew exactly where to find it.
 
-The forests surrounding Takayama produced some of the finest building timber in Japan. Hida carpenters — the Hida no Takumi — were so skilled they were conscripted by the imperial court to build temples, shrines, and palaces across the country. Their reputation stretched back over a thousand years.
+In Takayama.
 
----
+So in 1692, the Shogun abolished the local domain and brought the region under direct government control, claiming its forests, its craftsmen, and its wealth.
 
-When the Tokugawa Shogunate needed to rebuild Edo after the devastating Meireki Fire of 1657 — one of the deadliest fires in Japanese history — they needed timber. Enormous quantities of it.
+Ironically, that same mountain isolation helped preserve Takayama for centuries. While much of Japan's historic urban landscape disappeared, Takayama's Edo-era streets, merchant houses, and sake breweries survived.
 
-They knew exactly where it was.
+The Shogun seized Takayama for its timber.
 
-In 1692, the Shogunate abolished the local Kanamori clan's domain and declared Takayama a tenryō — territory under direct Shogunate control.
-
-For the next 176 years, Takayama would be governed not by a local lord, but by officials appointed directly from Edo.
-
-The Shogun owned it. Its forests, its carpenters, its wealth.
-
----
-
-But here's what makes this story remarkable.
-
-Direct Shogunate control, combined with Takayama's mountain isolation, created something almost impossible to find anywhere else in Japan.
-
-A city that was never destroyed. Never bombed. Never modernized beyond recognition.
-
-While Japan's great cities were flattened in World War II and rebuilt as modern metropolises, Takayama's remoteness spared it entirely.
-
-The Edo-era merchant quarter — the sake breweries, the old government house, the timber merchant homes — survived intact.
-
-What you walk through today is not a reconstruction. It is the original.
-
----
-
-The Shogun seized Takayama because he understood something most people still don't.
-
-The real power in feudal Japan wasn't always found in the castles or the armies.
-
-Sometimes it was buried deep in the mountains.
-
-In the trees.`
+But in doing so, he helped preserve one of the most authentic windows into old Japan.`
 
 export default function NewProjectPage() {
   const navigate = useNavigate()
