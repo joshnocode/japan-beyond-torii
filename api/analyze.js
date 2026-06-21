@@ -207,12 +207,25 @@ export default async function handler(req, res) {
   const apiKey = process.env.ANTHROPIC_API_KEY || process.env.VITE_ANTHROPIC_API_KEY
   if (!apiKey) return res.status(500).json({ error: 'ANTHROPIC_API_KEY is not configured' })
 
-  // Pre-compute scene count and pre-segment the script server-side.
-  // Claude only generates visual prompts — it never decides how to divide words.
+  // Pre-compute scene count and pre-segment before switching to SSE mode.
   const narrationWords = script.replace(/^[-*]{2,}\s*$/gm, '').trim().split(/\s+/).filter(Boolean).length
   const estimatedDurSec = Math.round(narrationWords / 130 * 60)
   const requiredSceneCount = Math.ceil(estimatedDurSec / 5)
   const segments = segmentScript(script, requiredSceneCount)
+
+  // Switch to SSE — keeps the iOS Safari connection alive with pings while
+  // Claude generates (which can take 60-150 seconds for long scripts).
+  res.setHeader('Content-Type', 'text/event-stream')
+  res.setHeader('Cache-Control', 'no-cache, no-transform')
+  res.setHeader('Connection', 'keep-alive')
+  res.setHeader('X-Accel-Buffering', 'no')
+
+  const send = (data) => res.write(`data: ${JSON.stringify(data)}\n\n`)
+
+  send({ type: 'progress', message: `Generating prompts for ${requiredSceneCount} scenes…` })
+
+  // Ping every 10 s so iOS Safari doesn't drop the idle connection.
+  const pingInterval = setInterval(() => send({ type: 'ping' }), 10000)
 
   try {
     const client = new Anthropic({ apiKey })
@@ -232,8 +245,6 @@ export default async function handler(req, res) {
       sceneList,
     ].join('\n')
 
-    // Use streaming to bypass the SDK's "streaming required for long ops" guard
-    // and to keep the Vercel connection alive during generation.
     const stream = client.messages.stream({
       model: 'claude-sonnet-4-6',
       max_tokens: 32000,
@@ -244,12 +255,15 @@ export default async function handler(req, res) {
     const brief = parseResponse(raw)
 
     if (!brief.scenes?.length) {
-      return res.status(422).json({ error: 'No scenes were parsed from the script. Try a shorter script or check the format.' })
+      send({ type: 'error', message: 'No scenes were parsed from the script. Try a shorter script or check the format.' })
+    } else {
+      send({ type: 'complete', data: brief })
     }
-
-    return res.status(200).json(brief)
   } catch (err) {
     console.error('analyze error:', err)
-    return res.status(500).json({ error: err.message || 'Analysis failed' })
+    send({ type: 'error', message: err.message || 'Analysis failed' })
+  } finally {
+    clearInterval(pingInterval)
+    res.end()
   }
 }

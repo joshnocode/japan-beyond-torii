@@ -68,6 +68,7 @@ export default function NewProjectPage() {
   const [brief, setBrief] = useState(null)
   const [error, setError] = useState('')
   const [debugInfo, setDebugInfo] = useState(null)
+  const [analyzeMsg, setAnalyzeMsg] = useState('Claude is parsing your script into scenes and generating prompts…')
 
   const wordCount = script.trim().split(/\s+/).filter(Boolean).length
 
@@ -75,10 +76,10 @@ export default function NewProjectPage() {
     if (!script.trim()) return setError('Please paste your script first.')
     setError('')
     setDebugInfo(null)
+    setAnalyzeMsg('Claude is parsing your script into scenes and generating prompts…')
     setPhase('analyzing')
 
     let httpStatus = null
-    let rawBody = null
     const t0 = Date.now()
 
     try {
@@ -88,18 +89,45 @@ export default function NewProjectPage() {
         body: JSON.stringify({ script }),
       })
       httpStatus = res.status
-      rawBody = await res.text()
 
       if (!res.ok) {
         let msg = `Server error ${res.status}`
-        try { msg = JSON.parse(rawBody).error || JSON.parse(rawBody).message || msg } catch {}
+        try { const b = await res.json(); msg = b.error || b.message || msg } catch {}
         throw new Error(msg)
       }
 
-      const data = JSON.parse(rawBody)
-      if (!title.trim() && data.title) setTitle(data.title)
-      setBrief(data)
-      setPhase('brief')
+      // Read SSE stream — server sends pings every 10s to keep iOS Safari alive,
+      // then a final {type:"complete"} or {type:"error"} event.
+      const reader = res.body.getReader()
+      const decoder = new TextDecoder()
+      let buffer = ''
+
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+        buffer += decoder.decode(value, { stream: true })
+
+        const events = buffer.split('\n\n')
+        buffer = events.pop() ?? ''
+
+        for (const event of events) {
+          const dataLine = event.split('\n').find(l => l.startsWith('data: '))
+          if (!dataLine) continue
+          let parsed
+          try { parsed = JSON.parse(dataLine.slice(6)) } catch { continue }
+
+          if (parsed.type === 'ping') continue
+          if (parsed.type === 'progress') { setAnalyzeMsg(parsed.message); continue }
+          if (parsed.type === 'error') throw new Error(parsed.message)
+          if (parsed.type === 'complete') {
+            const data = parsed.data
+            if (!title.trim() && data.title) setTitle(data.title)
+            setBrief(data)
+            setPhase('brief')
+            return
+          }
+        }
+      }
     } catch (err) {
       const elapsed = ((Date.now() - t0) / 1000).toFixed(1)
       setDebugInfo({
@@ -107,7 +135,6 @@ export default function NewProjectPage() {
         elapsed_sec: elapsed,
         http_status: httpStatus,
         error_message: err.message,
-        raw_body: rawBody ? rawBody.slice(0, 4000) : null,
       })
       setError(err.message)
       setPhase('input')
@@ -175,7 +202,7 @@ export default function NewProjectPage() {
             <div className="analyzing-card">
               <div className="spinner large" />
               <h3>Analyzing Script</h3>
-              <p>Claude is parsing your script into scenes and generating prompts…</p>
+              <p>{analyzeMsg}</p>
             </div>
           </div>
         )}
