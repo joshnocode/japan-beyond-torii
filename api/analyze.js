@@ -4,44 +4,30 @@ export const maxDuration = 300
 
 const SYSTEM_PROMPT = `You are a cinematic director for a Japanese historical documentary channel called Japan Beyond The Torii.
 
-Your job is to analyze a narration script and break it into scenes for video production.
+The script has already been divided into scenes for you. Your job is to generate visual prompts for each scene.
 
-Rules:
-- Each video clip is exactly 5 seconds. scene_count controls video length — it MUST be calculated precisely.
+For each scene you receive, output:
+- scene_number: the scene index provided
+- script_excerpt: copy the excerpt EXACTLY as given — do not modify, expand, or rewrite it
+- description: 1-2 sentence visual description of what the viewer sees
+- image_prompt: detailed FLUX photorealistic prompt — style MUST be: photorealistic, 8K cinematic photography, National Geographic documentary style, tangible real-world textures (aged wood grain, mossy stone, worn fabric). Specify the primary subject: either an architectural/landscape scene OR a human figure that fits the narration (a lone Hida carpenter shaping timber with hand tools, a Tokugawa official in formal kimono inspecting a courtyard, a merchant carrying goods through a snow-dusted street, a samurai standing before castle gates — always period-accurate Edo-era Japanese dress, seen from behind or at distance for anonymity). Add lighting quality (golden hour side-light, overcast diffused, blue-hour glow, lantern-lit interior). Apply a composition rule (rule of thirds, leading lines, foreground frame). Include specific environmental details from the scene narration. Aim for roughly half the scenes to feature a human figure and half to be pure environment/architecture — vary the two. CRITICAL — NEVER include: anime, illustration, cartoon, painting, watercolor, ink, sketch, cel-shaded, drawing, comic book, digital art, stylized, flat, 2D. NEVER depict text, writing, maps, scrolls, or documents.
+- motion_prompt: Seedance 3D camera movement — MUST describe a physical camera action. Choose one: slow dolly forward through [specific architectural element], aerial drone descent over [landmark or landscape], low-angle tracking shot following [subject or path], sweeping crane reveal of [vista], parallax push past [foreground object] revealing [background], steadicam walk through [interior or street]. Specify speed (slow / very slow) and the exact subject. Must feel like live-action cinematography.
 
-STEP 1 — Count narrated words only. Ignore non-spoken markers like "---", section dividers, or stage directions.
-
-STEP 2 — estimated_duration_seconds = round(narrated_word_count / 130 * 60)
-
-STEP 3 — scene_count = ceil(estimated_duration_seconds / 5)
-  You MUST output EXACTLY this many scenes. This is not a suggestion. Do not round down. Do not group scenes to fit paragraphs.
-
-STEP 4 — Split the script into exactly scene_count segments:
-  - Target 10–13 words per scene (≈5 seconds at 130 wpm)
-  - HARD LIMIT: never put more than 15 words in a single scene
-  - Always end a scene at a sentence boundary — never mid-sentence
-  - Short sentences (under 8 words) should be paired with the next sentence into one scene
-  - It is fine for scenes to split mid-paragraph — documentary clips change visuals frequently
-
-- For each scene, generate a detailed FLUX image prompt in strict photorealistic documentary style
-- For each scene, generate a Seedance motion prompt specifying a physical 3D camera movement
-- Cost rates: FLUX 1.1 Pro Ultra = $0.06 per image, Seedance 2.0 Fast 5s clip = $0.05 per clip, Claude analysis = $0.02 flat
-
-Return ONLY valid JSON — no markdown fences, no explanation, nothing else before or after the JSON object.
+Return ONLY valid JSON — no markdown fences, no explanation.
 
 JSON structure:
 {
   "title": "suggested video title derived from script content",
-  "estimated_duration_seconds": <integer>,
-  "scene_count": <integer>,
+  "estimated_duration_seconds": <integer — provided in the user message>,
+  "scene_count": <integer — number of scenes provided>,
   "tone_summary": "2-3 sentences on the overall visual tone, pacing, and emotional register",
   "scenes": [
     {
       "scene_number": 1,
-      "script_excerpt": "the exact sentences from the script assigned to this scene",
-      "description": "1-2 sentence visual description of what the viewer sees",
-      "image_prompt": "Photorealistic FLUX prompt — style MUST be: photorealistic, 8K cinematic photography, National Geographic documentary style, tangible real-world textures (aged wood grain, mossy stone, worn fabric). Specify the primary subject: either an architectural/landscape scene OR a human figure that fits the narration (a lone Hida carpenter shaping timber with hand tools, a Tokugawa official in formal kimono inspecting a courtyard, a merchant carrying goods through a snow-dusted street, a samurai standing before castle gates — always period-accurate Edo-era Japanese dress, seen from behind or at distance for anonymity). Add lighting quality (golden hour side-light, overcast diffused, blue-hour glow, lantern-lit interior). Apply a composition rule (rule of thirds, leading lines, foreground frame). Include specific environmental details from the scene narration. Aim for roughly half the scenes to feature a human figure and half to be pure environment/architecture — vary the two. CRITICAL — NEVER include: anime, illustration, cartoon, painting, watercolor, ink, sketch, cel-shaded, drawing, comic book, digital art, stylized, flat, 2D. NEVER depict text, writing, maps, scrolls, or documents — if the script mentions a map or document, show the physical environment instead (a dimly lit study room, hands resting on a table, a candlelit chamber).",
-      "motion_prompt": "Seedance 3D camera movement — MUST describe a physical camera action, not a digital zoom. Choose one: slow dolly forward through [specific architectural element], aerial drone descent over [landmark or landscape], low-angle tracking shot following [subject or path], sweeping crane reveal of [vista], parallax push past [foreground object] revealing [background], steadicam walk through [interior or street]. Specify speed (slow / very slow) and the exact subject the camera approaches or reveals. The shot must feel like live-action cinematography, not animation."
+      "script_excerpt": "<exact copy of the excerpt provided>",
+      "description": "...",
+      "image_prompt": "...",
+      "motion_prompt": "..."
     }
   ],
   "cost_estimate": {
@@ -63,6 +49,55 @@ JSON structure:
  *     any open arrays/objects, then splicing in a default cost_estimate
  *     if that key was never completed.
  */
+/**
+ * Split the narration script into exactly `sceneCount` segments server-side.
+ * Claude only generates image/motion prompts — it never decides how to divide the script.
+ */
+function segmentScript(script, sceneCount) {
+  // Remove non-spoken dividers (---, ***, etc.)
+  const cleaned = script.replace(/^[-*]{2,}\s*$/gm, '').replace(/\n{3,}/g, '\n\n').trim()
+
+  // Split on sentence-ending punctuation followed by whitespace
+  const sentences = cleaned.match(/[^.!?]+[.!?]+(\s|$)/g)?.map(s => s.trim()).filter(Boolean) || [cleaned]
+
+  const totalWords = sentences.reduce((n, s) => n + s.split(/\s+/).filter(Boolean).length, 0)
+  const targetWords = totalWords / sceneCount
+
+  const segments = []
+  let buf = []
+  let bufWords = 0
+
+  for (let i = 0; i < sentences.length; i++) {
+    const s = sentences[i]
+    const w = s.split(/\s+/).filter(Boolean).length
+    buf.push(s)
+    bufWords += w
+
+    const scenesLeft = sceneCount - segments.length
+    const sentencesLeft = sentences.length - i - 1
+
+    // Commit segment when we've hit the word target and there are enough
+    // sentences remaining to fill the rest of the scenes
+    if (bufWords >= targetWords && sentencesLeft >= scenesLeft - 1 && segments.length < sceneCount - 1) {
+      segments.push(buf.join(' '))
+      buf = []
+      bufWords = 0
+    }
+  }
+
+  // Remaining sentences form the last segment
+  if (buf.length) segments.push(buf.join(' '))
+
+  // Safety: trim or pad to exact count
+  while (segments.length > sceneCount) {
+    const last = segments.pop()
+    segments[segments.length - 1] += ' ' + last
+  }
+  while (segments.length < sceneCount) segments.push(segments[segments.length - 1] || '...')
+
+  return segments
+}
+
 function parseResponse(text) {
   // Strip markdown fences
   text = text.replace(/^```(?:json)?\s*/m, '').replace(/```\s*$/m, '').trim()
@@ -159,24 +194,29 @@ export default async function handler(req, res) {
   const apiKey = process.env.ANTHROPIC_API_KEY || process.env.VITE_ANTHROPIC_API_KEY
   if (!apiKey) return res.status(500).json({ error: 'ANTHROPIC_API_KEY is not configured' })
 
-  // Pre-compute scene count server-side so Claude receives the exact target number.
-  // Strip non-spoken markers (---, ***, section dividers) before counting words.
+  // Pre-compute scene count and pre-segment the script server-side.
+  // Claude only generates visual prompts — it never decides how to divide words.
   const narrationWords = script.replace(/^[-*]{2,}\s*$/gm, '').trim().split(/\s+/).filter(Boolean).length
   const estimatedDurSec = Math.round(narrationWords / 130 * 60)
   const requiredSceneCount = Math.ceil(estimatedDurSec / 5)
+  const segments = segmentScript(script, requiredSceneCount)
 
   try {
     const client = new Anthropic({ apiKey })
 
+    const sceneList = segments.map((text, i) => `Scene ${i + 1}: "${text}"`).join('\n')
+
     const userMessage = [
-      `PRE-COMPUTED VALUES (do not recalculate — use these exactly):`,
+      `Script metadata:`,
       `  spoken_word_count = ${narrationWords}`,
       `  estimated_duration_seconds = ${estimatedDurSec}`,
-      `  scene_count = ${requiredSceneCount}  ← you MUST generate exactly ${requiredSceneCount} scenes`,
+      `  scene_count = ${requiredSceneCount}`,
       ``,
-      `Analyze this script:`,
+      `The script has been pre-divided into exactly ${requiredSceneCount} scenes below.`,
+      `Generate description, image_prompt, and motion_prompt for each scene.`,
+      `Copy each scene's text as the script_excerpt — do NOT change it.`,
       ``,
-      script,
+      sceneList,
     ].join('\n')
 
     // Use streaming to bypass the SDK's "streaming required for long ops" guard
