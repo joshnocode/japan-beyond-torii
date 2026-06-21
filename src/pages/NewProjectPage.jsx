@@ -73,6 +73,10 @@ export default function NewProjectPage() {
   const [showDebug, setShowDebug] = useState(false)
 
   const wordCount = script.trim().split(/\s+/).filter(Boolean).length
+  const estimatedDurSec = Math.round(wordCount / 130 * 60)
+  const rawScenes = Math.ceil(estimatedDurSec / 5)
+  const cappedScenes = Math.min(200, rawScenes)
+  const clipLoopSec = cappedScenes > 0 ? estimatedDurSec / cappedScenes : 5
 
   const handleAnalyze = async () => {
     if (!script.trim()) return setError('Please paste your script first.')
@@ -282,7 +286,10 @@ export default function NewProjectPage() {
                 <label>
                   Script
                   {wordCount > 0 && (
-                    <span className="word-count">{wordCount} words · ~{Math.round(wordCount / 130)}m read</span>
+                    <span className="word-count">
+                      {wordCount} words · ~{Math.round(wordCount / 130)}m
+                      {clipLoopSec > 6 && ` · ${cappedScenes} scenes, each clip loops ~${clipLoopSec.toFixed(0)}s`}
+                    </span>
                   )}
                   <button
                     type="button"

@@ -208,9 +208,13 @@ export default async function handler(req, res) {
   if (!apiKey) return res.status(500).json({ error: 'ANTHROPIC_API_KEY is not configured' })
 
   // Pre-compute scene count and pre-segment before switching to SSE mode.
+  // Scenes are capped at 200 — for longer scripts each clip loops proportionally
+  // during assembly (e.g. a 73-min script → 200 scenes, each clip loops ~22s).
+  const MAX_SCENES = 200
   const narrationWords = script.replace(/^[-*]{2,}\s*$/gm, '').trim().split(/\s+/).filter(Boolean).length
   const estimatedDurSec = Math.round(narrationWords / 130 * 60)
-  const requiredSceneCount = Math.ceil(estimatedDurSec / 5)
+  const requiredSceneCount = Math.min(MAX_SCENES, Math.ceil(estimatedDurSec / 5))
+  const clipDurationSec = estimatedDurSec / requiredSceneCount
   const segments = segmentScript(script, requiredSceneCount)
 
   // Switch to SSE — keeps the iOS Safari connection alive with pings while

@@ -871,31 +871,27 @@ function AlignmentReport({ brief, sceneCount }) {
   const briefScenes = brief?.scenes || []
   if (!briefScenes.length) return null
 
-  const wordCounts   = briefScenes.map(s => (s.script_excerpt || '').trim().split(/\s+/).filter(Boolean).length)
-  const totalWords   = wordCounts.reduce((a, b) => a + b, 0)
-  const audioDurSec  = (totalWords / WPM) * 60
-  const videoDurSec  = sceneCount * CLIP_SEC
-  const neededScenes = Math.ceil(audioDurSec / CLIP_SEC)
-  const drift        = videoDurSec - audioDurSec
+  // Narration duration comes from the server's pre-computed value (authoritative).
+  const audioDurSec = brief.estimated_duration_seconds || 0
+  const totalScenes = briefScenes.length          // scenes that have prompts
+  const missingClips = totalScenes - sceneCount   // prompts without video yet
 
-  const rows = []
-  let narCursor = 0
-  for (let i = 0; i < briefScenes.length; i++) {
-    const narStart   = narCursor
-    const narEnd     = narStart + (wordCounts[i] / totalWords) * audioDurSec
-    narCursor        = narEnd
-    rows.push({
-      i,
-      narStart, narEnd,
-      vidStart: i * CLIP_SEC,
-      vidEnd:   (i + 1) * CLIP_SEC,
-      sceneDrift: (i * CLIP_SEC) - narStart,
-      excerpt: briefScenes[i].script_excerpt || '',
-      isCut: (i + 1) * CLIP_SEC > audioDurSec,
-    })
-  }
+  // Each clip loops to fill its equal share of the total narration.
+  // clipDur ≈ 5s for short scripts, longer for capped scene counts.
+  const clipDur = totalScenes > 0 ? audioDurSec / totalScenes : CLIP_SEC
+  const videoDurSec = sceneCount * clipDur
 
-  const isGood = Math.abs(drift) < 5
+  const rows = briefScenes.map((s, i) => ({
+    i,
+    narStart:  i * clipDur,
+    narEnd:    (i + 1) * clipDur,
+    vidStart:  i * clipDur,
+    vidEnd:    (i + 1) * clipDur,
+    excerpt:   s.script_excerpt || '',
+    hasVideo:  i < sceneCount,
+  }))
+
+  const isGood = missingClips <= 0
   const color  = isGood ? '#4caf50' : '#f44336'
 
   return (
@@ -906,27 +902,24 @@ function AlignmentReport({ brief, sceneCount }) {
         <div style={{ background: isGood ? '#1a3a1a' : '#3a1a1a', border: `1px solid ${color}`, borderRadius: '8px', padding: '12px 16px', marginBottom: '16px', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '12px' }}>
           <div>
             <p style={{ fontWeight: 'bold', color, marginBottom: '4px' }}>
-              {isGood ? '✅ Aligned'
-                : drift < 0 ? `⚠️ Video is ${fmtSec(Math.abs(drift))} shorter than narration — narration gets cut off`
-                : `⚠️ Video is ${fmtSec(drift)} longer than narration`}
+              {isGood
+                ? `✅ Aligned — ${totalScenes} clips × ~${clipDur.toFixed(1)}s each = ${fmtSec(audioDurSec)}`
+                : `⚠️ ${missingClips} clip${missingClips !== 1 ? 's' : ''} still pending — ${fmtSec(videoDurSec)} of ${fmtSec(audioDurSec)} narration covered`}
             </p>
             <p style={{ fontSize: '13px', color: '#aaa', margin: 0 }}>
-              Video: {fmtSec(videoDurSec)} ({sceneCount} clips × {CLIP_SEC}s)
-              &nbsp;·&nbsp; Narration: ~{fmtSec(audioDurSec)} ({totalWords} words @ {WPM} wpm)
-              {!isGood && <span style={{ color: '#f9a825' }}>&nbsp;·&nbsp; Need {neededScenes} clips, have {sceneCount} → re-analyze to fix</span>}
+              Each 5s clip loops for ~{clipDur.toFixed(1)}s &nbsp;·&nbsp; {sceneCount}/{totalScenes} clips ready &nbsp;·&nbsp; Narration: ~{fmtSec(audioDurSec)}
             </p>
           </div>
           <button
             className="btn-secondary"
             style={{ fontSize: '12px', padding: '4px 12px', flexShrink: 0 }}
             onClick={() => {
-              const header = `ALIGNMENT REPORT\nVideo: ${fmtSec(videoDurSec)} (${sceneCount} clips × ${CLIP_SEC}s) | Narration: ~${fmtSec(audioDurSec)} (${totalWords} words @ ${WPM}wpm) | Need: ${neededScenes} clips\n\n`
+              const header = `ALIGNMENT REPORT\nVideo: ${fmtSec(videoDurSec)} (${sceneCount}/${totalScenes} clips ready, each ~${clipDur.toFixed(1)}s) | Narration: ~${fmtSec(audioDurSec)} | Missing: ${missingClips} clips\n\n`
               const tableHeader = `Scene | Video       | Narration   | Drift  | Excerpt\n${'─'.repeat(90)}\n`
               const tableRows = rows.map(r => {
-                const drift = Math.abs(r.sceneDrift) < 0.5 ? '✓     ' : r.sceneDrift > 0 ? `+${r.sceneDrift.toFixed(1)}s ` : `${r.sceneDrift.toFixed(1)}s `
-                const cut = r.isCut ? ' ✂️' : ''
+                const status = r.hasVideo ? '✓      ' : 'pending'
                 const excerpt = r.excerpt.slice(0, 60) + (r.excerpt.length > 60 ? '…' : '')
-                return `${String(r.i + 1).padStart(5)} | ${fmtSec(r.vidStart)}–${fmtSec(r.vidEnd)} | ${fmtSec(r.narStart)}–${fmtSec(r.narEnd)} | ${drift}${cut} | "${excerpt}"`
+                return `${String(r.i + 1).padStart(5)} | ${fmtSec(r.vidStart)}–${fmtSec(r.vidEnd)} | ${fmtSec(r.narStart)}–${fmtSec(r.narEnd)} | ${status} | "${excerpt}"`
               }).join('\n')
               navigator.clipboard.writeText(header + tableHeader + tableRows)
             }}
@@ -947,26 +940,21 @@ function AlignmentReport({ brief, sceneCount }) {
               </tr>
             </thead>
             <tbody>
-              {rows.map(r => {
-                const abs = Math.abs(r.sceneDrift)
-                const dc  = abs < 2 ? '#4caf50' : abs < 8 ? '#f9a825' : '#f44336'
-                return (
-                  <tr key={r.i} style={{ borderBottom: '1px solid #222', background: r.isCut ? 'rgba(244,67,54,0.07)' : 'transparent' }}>
-                    <td style={{ padding: '6px 8px', color: '#888' }}>{r.i + 1}</td>
-                    <td style={{ padding: '6px 8px', whiteSpace: 'nowrap', fontFamily: 'monospace' }}>{fmtSec(r.vidStart)}–{fmtSec(r.vidEnd)}</td>
-                    <td style={{ padding: '6px 8px', whiteSpace: 'nowrap', fontFamily: 'monospace', color: '#aaa' }}>{fmtSec(r.narStart)}–{fmtSec(r.narEnd)}</td>
-                    <td style={{ padding: '6px 8px', whiteSpace: 'nowrap', fontFamily: 'monospace', color: dc }}>
-                      {Math.abs(r.sceneDrift) < 0.5 ? '✓' : r.sceneDrift > 0 ? `+${r.sceneDrift.toFixed(1)}s` : `${r.sceneDrift.toFixed(1)}s`}
-                      {r.isCut ? ' ✂️' : ''}
-                    </td>
-                    <td style={{ padding: '6px 8px', color: '#ccc', maxWidth: '240px' }}>
-                      <span style={{ display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
-                        "{r.excerpt}"
-                      </span>
-                    </td>
-                  </tr>
-                )
-              })}
+              {rows.map(r => (
+                <tr key={r.i} style={{ borderBottom: '1px solid #222', background: r.hasVideo ? 'transparent' : 'rgba(255,200,0,0.04)' }}>
+                  <td style={{ padding: '6px 8px', color: '#888' }}>{r.i + 1}</td>
+                  <td style={{ padding: '6px 8px', whiteSpace: 'nowrap', fontFamily: 'monospace' }}>{fmtSec(r.vidStart)}–{fmtSec(r.vidEnd)}</td>
+                  <td style={{ padding: '6px 8px', whiteSpace: 'nowrap', fontFamily: 'monospace', color: '#aaa' }}>{fmtSec(r.narStart)}–{fmtSec(r.narEnd)}</td>
+                  <td style={{ padding: '6px 8px', whiteSpace: 'nowrap', color: r.hasVideo ? '#4caf50' : '#f9a825' }}>
+                    {r.hasVideo ? '✓' : 'pending'}
+                  </td>
+                  <td style={{ padding: '6px 8px', color: '#ccc', maxWidth: '240px' }}>
+                    <span style={{ display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
+                      "{r.excerpt}"
+                    </span>
+                  </td>
+                </tr>
+              ))}
             </tbody>
           </table>
         </div>
