@@ -134,6 +134,19 @@ function parseResponse(text) {
       )
       obj.scene_count = obj.scenes.length
     }
+    // Always recalculate cost from actual scene count so the UI numbers are consistent
+    if (obj.scene_count) {
+      const n = obj.scene_count
+      const img = +(n * 0.06).toFixed(2)
+      const vid = +(n * 0.05).toFixed(2)
+      obj.cost_estimate = {
+        image_generation_usd: img,
+        video_generation_usd: vid,
+        claude_api_usd: 0.02,
+        total_usd: +(img + vid + 0.02).toFixed(2),
+        per_scene_breakdown: 'Each scene: $0.06 image + $0.05 video = $0.11',
+      }
+    }
     return obj
   } catch (e) {
     throw new Error(`JSON repair failed: ${e.message}`)
@@ -223,7 +236,7 @@ export default async function handler(req, res) {
     // and to keep the Vercel connection alive during generation.
     const stream = client.messages.stream({
       model: 'claude-sonnet-4-6',
-      max_tokens: 16000,
+      max_tokens: 32000,
       system: SYSTEM_PROMPT,
       messages: [{ role: 'user', content: userMessage }],
     })
