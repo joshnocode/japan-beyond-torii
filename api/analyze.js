@@ -139,12 +139,35 @@ function parseResponse(text) {
         per_scene_breakdown: 'Each scene: $0.06 image + $0.05 video = $0.11',
       }
     }
-    // Keep only complete scenes; default duration_sec to 5 if director omitted it
+    // Keep only complete scenes
     if (Array.isArray(obj.scenes)) {
       obj.scenes = obj.scenes
         .filter((s) => s && s.scene_number && s.image_prompt && s.motion_prompt)
-        .map((s) => ({ ...s, duration_sec: Math.max(3, Math.min(60, parseInt(s.duration_sec) || 5)) }))
       obj.scene_count = obj.scenes.length
+    }
+
+    // Override director's duration_sec with word-count-proportional values so that
+    // video cuts align with the actual narration speaking time, not creative guesses.
+    // The director decides WHERE to cut; math decides HOW LONG each cut holds.
+    if (Array.isArray(obj.scenes) && obj.scenes.length > 0 && obj.estimated_duration_seconds > 0) {
+      const totalDurSec = obj.estimated_duration_seconds
+      const wordCounts = obj.scenes.map(s =>
+        Math.max(1, (s.script_excerpt || '').split(/\s+/).filter(Boolean).length)
+      )
+      const totalWords = wordCounts.reduce((a, b) => a + b, 0)
+      let assigned = 0
+      obj.scenes = obj.scenes.map((s, i) => {
+        let dur
+        if (i === obj.scenes.length - 1) {
+          dur = Math.max(3, Math.round(totalDurSec) - assigned)
+        } else {
+          dur = Math.max(3, Math.round((wordCounts[i] / totalWords) * totalDurSec))
+          assigned += dur
+        }
+        return { ...s, duration_sec: dur }
+      })
+    } else if (Array.isArray(obj.scenes)) {
+      obj.scenes = obj.scenes.map(s => ({ ...s, duration_sec: 5 }))
     }
     // Always recalculate cost from actual scene count so the UI numbers are consistent
     if (obj.scene_count) {
