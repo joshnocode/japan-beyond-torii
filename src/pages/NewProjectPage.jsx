@@ -69,6 +69,8 @@ export default function NewProjectPage() {
   const [error, setError] = useState('')
   const [debugInfo, setDebugInfo] = useState(null)
   const [analyzeMsg, setAnalyzeMsg] = useState('Claude is parsing your script into scenes and generating prompts…')
+  const [sseLog, setSseLog] = useState([])
+  const [showDebug, setShowDebug] = useState(false)
 
   const wordCount = script.trim().split(/\s+/).filter(Boolean).length
 
@@ -76,19 +78,29 @@ export default function NewProjectPage() {
     if (!script.trim()) return setError('Please paste your script first.')
     setError('')
     setDebugInfo(null)
+    setSseLog([])
+    setShowDebug(false)
     setAnalyzeMsg('Claude is parsing your script into scenes and generating prompts…')
     setPhase('analyzing')
 
     let httpStatus = null
     const t0 = Date.now()
+    const log = []
+    const addLog = (entry) => {
+      const ts = `+${((Date.now() - t0) / 1000).toFixed(1)}s`
+      log.push(`[${ts}] ${entry}`)
+      setSseLog([...log])
+    }
 
     try {
+      addLog('Connecting to /api/analyze…')
       const res = await fetch(`${API_BASE}/api/analyze`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ script }),
       })
       httpStatus = res.status
+      addLog(`HTTP ${res.status} — reading SSE stream`)
 
       if (!res.ok) {
         let msg = `Server error ${res.status}`
@@ -104,7 +116,7 @@ export default function NewProjectPage() {
 
       while (true) {
         const { done, value } = await reader.read()
-        if (done) break
+        if (done) { addLog('Stream closed'); break }
         buffer += decoder.decode(value, { stream: true })
 
         const events = buffer.split('\n\n')
@@ -116,10 +128,18 @@ export default function NewProjectPage() {
           let parsed
           try { parsed = JSON.parse(dataLine.slice(6)) } catch { continue }
 
-          if (parsed.type === 'ping') continue
-          if (parsed.type === 'progress') { setAnalyzeMsg(parsed.message); continue }
-          if (parsed.type === 'error') throw new Error(parsed.message)
+          if (parsed.type === 'ping') { addLog('ping ♡'); continue }
+          if (parsed.type === 'progress') {
+            addLog(`progress: ${parsed.message}`)
+            setAnalyzeMsg(parsed.message)
+            continue
+          }
+          if (parsed.type === 'error') {
+            addLog(`error: ${parsed.message}`)
+            throw new Error(parsed.message)
+          }
           if (parsed.type === 'complete') {
+            addLog(`complete — ${parsed.data.scene_count} scenes`)
             const data = parsed.data
             if (!title.trim() && data.title) setTitle(data.title)
             setBrief(data)
@@ -130,11 +150,13 @@ export default function NewProjectPage() {
       }
     } catch (err) {
       const elapsed = ((Date.now() - t0) / 1000).toFixed(1)
+      addLog(`FAILED after ${elapsed}s: ${err.message}`)
       setDebugInfo({
         timestamp: new Date().toISOString(),
         elapsed_sec: elapsed,
         http_status: httpStatus,
         error_message: err.message,
+        sse_log: log,
       })
       setError(err.message)
       setPhase('input')
@@ -203,6 +225,27 @@ export default function NewProjectPage() {
               <div className="spinner large" />
               <h3>Analyzing Script</h3>
               <p>{analyzeMsg}</p>
+              <button
+                type="button"
+                className="debug-copy-btn"
+                style={{ marginTop: 16 }}
+                onClick={() => setShowDebug(v => !v)}
+              >
+                {showDebug ? 'Hide log' : 'Debug log'}
+              </button>
+              {showDebug && (
+                <div className="debug-body" style={{ marginTop: 8, width: '100%', textAlign: 'left' }}>
+                  <button
+                    type="button"
+                    className="debug-copy-btn"
+                    style={{ position: 'static', marginBottom: 6 }}
+                    onClick={() => navigator.clipboard.writeText(sseLog.join('\n'))}
+                  >
+                    Copy log
+                  </button>
+                  <pre className="debug-pre">{sseLog.join('\n') || '(waiting…)'}</pre>
+                </div>
+              )}
             </div>
           </div>
         )}
