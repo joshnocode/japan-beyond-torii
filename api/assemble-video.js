@@ -107,16 +107,23 @@ export default async function handler(req, res) {
       }
     }
 
-    // Safety net: if clips total less than 90% of audio duration, loop each clip
-    // proportionally so narration isn't cut off (ideally scene_count is correct and
-    // clipDuration stays at 5s).
-    const videoDurSec = scenes.length * 5
-    const clipDuration = (audioDurSec && audioDurSec > videoDurSec * 1.1)
+    // Build per-scene duration map from director's brief.
+    // Falls back to proportional average if brief data is missing.
+    const briefScenes = project.brief?.scenes || []
+    const briefDurMap = new Map(briefScenes.map(s => [s.scene_number - 1, s.duration_sec]))
+    const totalBriefDur = briefScenes.reduce((sum, s) => sum + (s.duration_sec || 0), 0)
+    const fallbackDur = (audioDurSec && scenes.length)
       ? audioDurSec / scenes.length
-      : null
-    if (clipDuration) log.push(`[${ts()}] safety-net: looping each clip to ${clipDuration.toFixed(2)}s (video ${videoDurSec}s < audio ${audioDurSec?.toFixed(1)}s)`)
+      : 5
+    const getClipDur = (scene_index) => {
+      const d = briefDurMap.get(scene_index)
+      if (d && d > 0) return d
+      // Scale fallback proportionally if director durations were partially set
+      return totalBriefDur > 0 ? fallbackDur : 5
+    }
+    log.push(`[${ts()}] using director durations (fallback=${fallbackDur.toFixed(1)}s)`)
 
-    // Encode each clip sequentially
+    // Encode each clip, looping it to match its director-assigned duration
     log.push(`[${ts()}] encoding ${scenes.length} clips`)
     const scaledPaths = []
     for (const { scene_index, buf } of clips) {
@@ -124,14 +131,13 @@ export default async function handler(req, res) {
       const scaledPath = join(jobDir, `scaled_${scene_index}.mp4`)
       await writeFile(origPath, buf)
 
-      const args = ['-loglevel', 'error']
-      if (clipDuration) args.push('-stream_loop', '-1')
-      args.push('-i', origPath,
+      const clipDur = getClipDur(scene_index)
+      const args = ['-loglevel', 'error', '-stream_loop', '-1', '-i', origPath,
         '-vf', 'scale=720:-2',
         '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '34',
-        '-maxrate', '1400k', '-bufsize', '2800k', '-an')
-      if (clipDuration) args.push('-t', clipDuration.toFixed(3))
-      args.push('-y', scaledPath)
+        '-maxrate', '1400k', '-bufsize', '2800k', '-an',
+        '-t', clipDur.toFixed(3),
+        '-y', scaledPath]
 
       await run(ffmpeg, args)
       await unlink(origPath)

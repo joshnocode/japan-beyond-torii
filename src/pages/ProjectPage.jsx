@@ -876,20 +876,27 @@ function AlignmentReport({ brief, sceneCount }) {
   const totalScenes = briefScenes.length          // scenes that have prompts
   const missingClips = totalScenes - sceneCount   // prompts without video yet
 
-  // Each clip loops to fill its equal share of the total narration.
-  // clipDur ≈ 5s for short scripts, longer for capped scene counts.
-  const clipDur = totalScenes > 0 ? audioDurSec / totalScenes : CLIP_SEC
-  const videoDurSec = sceneCount * clipDur
+  // Use director-assigned duration_sec per scene; fall back to equal split.
+  const fallbackDur = totalScenes > 0 ? audioDurSec / totalScenes : CLIP_SEC
+  const hasDirDurations = briefScenes.some(s => s.duration_sec > 0)
 
-  const rows = briefScenes.map((s, i) => ({
-    i,
-    narStart:  i * clipDur,
-    narEnd:    (i + 1) * clipDur,
-    vidStart:  i * clipDur,
-    vidEnd:    (i + 1) * clipDur,
-    excerpt:   s.script_excerpt || '',
-    hasVideo:  i < sceneCount,
-  }))
+  let cursor = 0
+  const rows = briefScenes.map((s, i) => {
+    const dur = hasDirDurations ? (s.duration_sec || fallbackDur) : fallbackDur
+    const row = {
+      i,
+      dur,
+      narStart: cursor,
+      narEnd:   cursor + dur,
+      vidStart: cursor,
+      vidEnd:   cursor + dur,
+      excerpt:  s.script_excerpt || '',
+      hasVideo: i < sceneCount,
+    }
+    cursor += dur
+    return row
+  })
+  const videoDurSec = rows.slice(0, sceneCount).reduce((s, r) => s + r.dur, 0)
 
   const isGood = missingClips <= 0
   const color  = isGood ? '#4caf50' : '#f44336'
@@ -933,9 +940,10 @@ function AlignmentReport({ brief, sceneCount }) {
             <thead>
               <tr style={{ borderBottom: '1px solid #333', color: '#777', textAlign: 'left' }}>
                 <th style={{ padding: '6px 8px' }}>#</th>
+                <th style={{ padding: '6px 8px' }}>Dur</th>
                 <th style={{ padding: '6px 8px' }}>Video plays</th>
-                <th style={{ padding: '6px 8px' }}>Narration at that time</th>
-                <th style={{ padding: '6px 8px' }}>Drift</th>
+                <th style={{ padding: '6px 8px' }}>Narration</th>
+                <th style={{ padding: '6px 8px' }}>Status</th>
                 <th style={{ padding: '6px 8px' }}>What's being said</th>
               </tr>
             </thead>
@@ -943,6 +951,7 @@ function AlignmentReport({ brief, sceneCount }) {
               {rows.map(r => (
                 <tr key={r.i} style={{ borderBottom: '1px solid #222', background: r.hasVideo ? 'transparent' : 'rgba(255,200,0,0.04)' }}>
                   <td style={{ padding: '6px 8px', color: '#888' }}>{r.i + 1}</td>
+                  <td style={{ padding: '6px 8px', whiteSpace: 'nowrap', fontFamily: 'monospace', color: 'rgba(201,168,76,0.7)' }}>{r.dur}s</td>
                   <td style={{ padding: '6px 8px', whiteSpace: 'nowrap', fontFamily: 'monospace' }}>{fmtSec(r.vidStart)}–{fmtSec(r.vidEnd)}</td>
                   <td style={{ padding: '6px 8px', whiteSpace: 'nowrap', fontFamily: 'monospace', color: '#aaa' }}>{fmtSec(r.narStart)}–{fmtSec(r.narEnd)}</td>
                   <td style={{ padding: '6px 8px', whiteSpace: 'nowrap', color: r.hasVideo ? '#4caf50' : '#f9a825' }}>

@@ -788,6 +788,13 @@ h1, h2, h3, h4 {
   letter-spacing: 0.06em;
 }
 
+.scene-duration {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: rgba(201,168,76,0.6);
+  font-family: monospace;
+}
+
 .scene-body {
   padding: 16px;
   display: flex;

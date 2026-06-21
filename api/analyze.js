@@ -2,39 +2,51 @@ import Anthropic from '@anthropic-ai/sdk'
 
 export const maxDuration = 300
 
-const SYSTEM_PROMPT = `You are a cinematic director for a Japanese historical documentary channel called Japan Beyond The Torii.
+const SYSTEM_PROMPT = `You are the director of a Japanese historical documentary channel called Japan Beyond The Torii.
 
-The script has already been divided into scenes for you. Your job is to generate visual prompts for each scene.
+Your job is to read the full narration script and make real directorial decisions — not equal mechanical cuts, but intentional editorial rhythm. You decide how many scenes, what each scene shows, and critically: how long each scene holds on screen.
 
-For each scene you receive, output:
-- scene_number: the scene index provided
-- script_excerpt: copy the excerpt EXACTLY as given — do not modify, expand, or rewrite it
-- description: 1-2 sentence visual description of what the viewer sees
-- image_prompt: detailed FLUX photorealistic prompt — style MUST be: photorealistic, 8K cinematic photography, National Geographic documentary style, tangible real-world textures (aged wood grain, mossy stone, worn fabric). Specify the primary subject: either an architectural/landscape scene OR a human figure that fits the narration (a lone Hida carpenter shaping timber with hand tools, a Tokugawa official in formal kimono inspecting a courtyard, a merchant carrying goods through a snow-dusted street, a samurai standing before castle gates — always period-accurate Edo-era Japanese dress, seen from behind or at distance for anonymity). Add lighting quality (golden hour side-light, overcast diffused, blue-hour glow, lantern-lit interior). Apply a composition rule (rule of thirds, leading lines, foreground frame). Include specific environmental details from the scene narration. Aim for roughly half the scenes to feature a human figure and half to be pure environment/architecture — vary the two. CRITICAL — NEVER include: anime, illustration, cartoon, painting, watercolor, ink, sketch, cel-shaded, drawing, comic book, digital art, stylized, flat, 2D. NEVER depict text, writing, maps, scrolls, or documents.
-- motion_prompt: Seedance 3D camera movement — MUST describe a physical camera action. Choose one: slow dolly forward through [specific architectural element], aerial drone descent over [landmark or landscape], low-angle tracking shot following [subject or path], sweeping crane reveal of [vista], parallax push past [foreground object] revealing [background], steadicam walk through [interior or street]. Specify speed (slow / very slow) and the exact subject. Must feel like live-action cinematography.
+PACING RULES (assign duration_sec to each scene):
+- 3–6s: Sharp cuts — a single dramatic word or phrase, a reveal, a punctuation beat
+- 8–15s: Standard shots — a sentence or two of narration, transitions, quick establishing
+- 18–30s: Breathing room — a paragraph of context, a beautiful landscape, an emotional moment
+- 35–60s: Lingering holds — a powerful opening or closing image, a key architectural reveal, contemplative silence over scenery
+
+Think like Scorsese: vary the rhythm. Don't give every scene the same duration. A fast sequence of 4-second cuts followed by a 45-second hold on a mountain vista is more cinematic than 30 identical 10-second clips.
+
+CONSTRAINT: scene durations must sum to approximately estimated_duration_seconds (provided). You have creative freedom within ±10%.
+CONSTRAINT: total scene count must not exceed max_scenes (provided). Aim for 40–120 scenes for most scripts.
+
+For each scene output:
+- scene_number: sequential integer starting at 1
+- duration_sec: integer — how long this clip plays on screen (3–60)
+- script_excerpt: the narration text that plays during this scene (your choice of what to include — can be a phrase, a sentence, or a paragraph)
+- description: 1-2 sentence visual description
+- image_prompt: detailed FLUX photorealistic prompt. Style: photorealistic, 8K cinematic photography, National Geographic documentary. Textures: aged wood grain, mossy stone, worn fabric, weathered plaster. Subject: either pure architecture/landscape OR a human figure (Hida carpenter shaping timber, Tokugawa official in formal kimono, merchant through snow-dusted street, samurai before castle gates — always period-accurate Edo-era dress, seen from behind or distance). Lighting: golden hour side-light, overcast diffused, blue-hour glow, or lantern-lit interior. Composition: rule of thirds, leading lines, or foreground frame. NEVER: anime, illustration, cartoon, painting, watercolor, ink, sketch, digital art, stylized, 2D. NEVER: text, writing, maps, scrolls, documents.
+- motion_prompt: one physical camera move — slow dolly forward through [element], aerial drone descent over [landmark], low-angle tracking shot following [subject], sweeping crane reveal of [vista], parallax push past [foreground] revealing [background], or steadicam walk through [space]. Always specify slow/very slow speed.
 
 Return ONLY valid JSON — no markdown fences, no explanation.
 
-JSON structure:
 {
-  "title": "suggested video title derived from script content",
-  "estimated_duration_seconds": <integer — provided in the user message>,
-  "scene_count": <integer — number of scenes provided>,
-  "tone_summary": "2-3 sentences on the overall visual tone, pacing, and emotional register",
+  "title": "video title from script content",
+  "estimated_duration_seconds": <from user message>,
+  "scene_count": <total scenes you chose>,
+  "tone_summary": "2-3 sentences on visual tone, pacing strategy, and emotional arc",
   "scenes": [
     {
       "scene_number": 1,
-      "script_excerpt": "<exact copy of the excerpt provided>",
+      "duration_sec": 12,
+      "script_excerpt": "...",
       "description": "...",
       "image_prompt": "...",
       "motion_prompt": "..."
     }
   ],
   "cost_estimate": {
-    "image_generation_usd": <scene_count * 0.06, rounded to 2 decimals>,
-    "video_generation_usd": <scene_count * 0.05, rounded to 2 decimals>,
+    "image_generation_usd": <scene_count * 0.06>,
+    "video_generation_usd": <scene_count * 0.05>,
     "claude_api_usd": 0.02,
-    "total_usd": <sum, rounded to 2 decimals>,
+    "total_usd": <sum>,
     "per_scene_breakdown": "Each scene: $0.06 image + $0.05 video = $0.11"
   }
 }`
@@ -127,11 +139,11 @@ function parseResponse(text) {
         per_scene_breakdown: 'Each scene: $0.06 image + $0.05 video = $0.11',
       }
     }
-    // Keep only complete scenes (scene_number, image_prompt, motion_prompt all present)
+    // Keep only complete scenes; default duration_sec to 5 if director omitted it
     if (Array.isArray(obj.scenes)) {
-      obj.scenes = obj.scenes.filter(
-        (s) => s && s.scene_number && s.image_prompt && s.motion_prompt
-      )
+      obj.scenes = obj.scenes
+        .filter((s) => s && s.scene_number && s.image_prompt && s.motion_prompt)
+        .map((s) => ({ ...s, duration_sec: Math.max(3, Math.min(60, parseInt(s.duration_sec) || 5)) }))
       obj.scene_count = obj.scenes.length
     }
     // Always recalculate cost from actual scene count so the UI numbers are consistent
@@ -207,15 +219,10 @@ export default async function handler(req, res) {
   const apiKey = process.env.ANTHROPIC_API_KEY || process.env.VITE_ANTHROPIC_API_KEY
   if (!apiKey) return res.status(500).json({ error: 'ANTHROPIC_API_KEY is not configured' })
 
-  // Pre-compute scene count and pre-segment before switching to SSE mode.
-  // Scenes are capped at 200 — for longer scripts each clip loops proportionally
-  // during assembly (e.g. a 73-min script → 200 scenes, each clip loops ~22s).
-  const MAX_SCENES = 200
+  // Pre-compute metadata only — the director AI decides scene count and durations.
+  const MAX_SCENES = 120
   const narrationWords = script.replace(/^[-*]{2,}\s*$/gm, '').trim().split(/\s+/).filter(Boolean).length
   const estimatedDurSec = Math.round(narrationWords / 130 * 60)
-  const requiredSceneCount = Math.min(MAX_SCENES, Math.ceil(estimatedDurSec / 5))
-  const clipDurationSec = estimatedDurSec / requiredSceneCount
-  const segments = segmentScript(script, requiredSceneCount)
 
   // Switch to SSE — keeps the iOS Safari connection alive with pings while
   // Claude generates (which can take 60-150 seconds for long scripts).
@@ -226,7 +233,7 @@ export default async function handler(req, res) {
 
   const send = (data) => res.write(`data: ${JSON.stringify(data)}\n\n`)
 
-  send({ type: 'progress', message: `Generating prompts for ${requiredSceneCount} scenes…` })
+  send({ type: 'progress', message: `Director is reading the script and planning ${Math.round(estimatedDurSec / 60)}-minute edit…` })
 
   // Ping every 10 s so iOS Safari doesn't drop the idle connection.
   const pingInterval = setInterval(() => send({ type: 'ping' }), 10000)
@@ -234,19 +241,15 @@ export default async function handler(req, res) {
   try {
     const client = new Anthropic({ apiKey })
 
-    const sceneList = segments.map((text, i) => `Scene ${i + 1}: "${text}"`).join('\n')
-
     const userMessage = [
       `Script metadata:`,
       `  spoken_word_count = ${narrationWords}`,
       `  estimated_duration_seconds = ${estimatedDurSec}`,
-      `  scene_count = ${requiredSceneCount}`,
+      `  max_scenes = ${MAX_SCENES}`,
       ``,
-      `The script has been pre-divided into exactly ${requiredSceneCount} scenes below.`,
-      `Generate description, image_prompt, and motion_prompt for each scene.`,
-      `Copy each scene's text as the script_excerpt — do NOT change it.`,
+      `Full narration script:`,
       ``,
-      sceneList,
+      script.trim(),
     ].join('\n')
 
     const stream = client.messages.stream({

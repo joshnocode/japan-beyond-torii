@@ -405,6 +405,9 @@ export default function NewProjectPage() {
                   <div key={scene.scene_number} className="scene-card">
                     <div className="scene-header">
                       <span className="scene-number">Scene {scene.scene_number}</span>
+                      {scene.duration_sec && (
+                        <span className="scene-duration">{scene.duration_sec}s</span>
+                      )}
                     </div>
                     <div className="scene-body">
                       <div className="scene-block">
