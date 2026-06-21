@@ -897,6 +897,8 @@ function AlignmentReport({ brief, sceneCount }) {
     return row
   })
   const videoDurSec = rows.slice(0, sceneCount).reduce((s, r) => s + r.dur, 0)
+  const totalVideoDurSec = cursor
+  const avgClipDur = totalScenes > 0 ? totalVideoDurSec / totalScenes : CLIP_SEC
 
   const isGood = missingClips <= 0
   const color  = isGood ? '#4caf50' : '#f44336'
@@ -910,18 +912,18 @@ function AlignmentReport({ brief, sceneCount }) {
           <div>
             <p style={{ fontWeight: 'bold', color, marginBottom: '4px' }}>
               {isGood
-                ? `✅ Aligned — ${totalScenes} clips × ~${clipDur.toFixed(1)}s each = ${fmtSec(audioDurSec)}`
+                ? `✅ Aligned — ${totalScenes} clips totaling ${fmtSec(totalVideoDurSec)} ≈ ${fmtSec(audioDurSec)}`
                 : `⚠️ ${missingClips} clip${missingClips !== 1 ? 's' : ''} still pending — ${fmtSec(videoDurSec)} of ${fmtSec(audioDurSec)} narration covered`}
             </p>
             <p style={{ fontSize: '13px', color: '#aaa', margin: 0 }}>
-              Each 5s clip loops for ~{clipDur.toFixed(1)}s &nbsp;·&nbsp; {sceneCount}/{totalScenes} clips ready &nbsp;·&nbsp; Narration: ~{fmtSec(audioDurSec)}
+              Variable durations (avg ~{avgClipDur.toFixed(1)}s) &nbsp;·&nbsp; {sceneCount}/{totalScenes} clips ready &nbsp;·&nbsp; Narration: ~{fmtSec(audioDurSec)}
             </p>
           </div>
           <button
             className="btn-secondary"
             style={{ fontSize: '12px', padding: '4px 12px', flexShrink: 0 }}
             onClick={() => {
-              const header = `ALIGNMENT REPORT\nVideo: ${fmtSec(videoDurSec)} (${sceneCount}/${totalScenes} clips ready, each ~${clipDur.toFixed(1)}s) | Narration: ~${fmtSec(audioDurSec)} | Missing: ${missingClips} clips\n\n`
+              const header = `ALIGNMENT REPORT\nVideo: ${fmtSec(videoDurSec)} (${sceneCount}/${totalScenes} clips ready, avg ~${avgClipDur.toFixed(1)}s) | Narration: ~${fmtSec(audioDurSec)} | Missing: ${missingClips} clips\n\n`
               const tableHeader = `Scene | Video       | Narration   | Drift  | Excerpt\n${'─'.repeat(90)}\n`
               const tableRows = rows.map(r => {
                 const status = r.hasVideo ? '✓      ' : 'pending'
