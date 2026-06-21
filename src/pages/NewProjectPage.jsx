@@ -5,7 +5,7 @@ import { useAuth } from '../hooks/useAuth'
 
 const API_BASE = import.meta.env.DEV ? 'http://localhost:3000' : ''
 
-const TAKAYAMA_SCRIPT = `In 1692, the Tokugawa Shogunate did something it almost never did.
+const TAKAYAMA_1MIN = `In 1692, the Tokugawa Shogunate did something it almost never did.
 
 It reached deep into the Japanese Alps and seized direct control of Takayama.
 
@@ -30,6 +30,52 @@ Ironically, that same mountain isolation helped preserve Takayama for centuries.
 The Shogun seized Takayama for its timber.
 
 But in doing so, he helped preserve one of the most authentic windows into old Japan.`
+
+const TAKAYAMA_3MIN = `In 1692, the most powerful government in Japanese history did something it almost never did.
+
+It reached into a remote mountain valley — deep in the Japanese Alps — and seized direct control of a city.
+
+Not because the city was weak.
+
+Because it was too powerful to leave alone.
+
+Takayama sits in Hida Province — one of the most geographically isolated regions in all of Japan.
+
+For centuries, that isolation was its armor. The mountains were so severe, so unforgiving, that no army ever successfully conquered this place.
+
+But isolation alone doesn't explain why Takayama was wealthy. The mountains did.
+
+The forests surrounding Takayama produced some of the finest building timber in Japan. Hida carpenters — the Hida no Takumi — were so skilled they were conscripted by the imperial court to build temples, shrines, and palaces across the country. Their reputation stretched back over a thousand years.
+
+When the Tokugawa Shogunate needed to rebuild Edo after the devastating Meireki Fire of 1657 — one of the deadliest fires in Japanese history — they needed timber. Enormous quantities of it.
+
+They knew exactly where it was.
+
+In 1692, the Shogunate abolished the local Kanamori clan's domain and declared Takayama a tenryō — territory under direct Shogunate control.
+
+For the next 176 years, Takayama would be governed not by a local lord, but by officials appointed directly from Edo.
+
+The Shogun owned it. Its forests, its carpenters, its wealth.
+
+But here's what makes this story remarkable.
+
+Direct Shogunate control, combined with Takayama's mountain isolation, created something almost impossible to find anywhere else in Japan.
+
+A city that was never destroyed. Never bombed. Never modernized beyond recognition.
+
+While Japan's great cities were flattened in World War II and rebuilt as modern metropolises, Takayama's remoteness spared it entirely.
+
+The Edo-era merchant quarter — the sake breweries, the old government house, the timber merchant homes — survived intact.
+
+What you walk through today is not a reconstruction. It is the original.
+
+The Shogun seized Takayama because he understood something most people still don't.
+
+The real power in feudal Japan wasn't always found in the castles or the armies.
+
+Sometimes it was buried deep in the mountains.
+
+In the trees.`
 
 export default function NewProjectPage() {
   const navigate = useNavigate()
@@ -263,13 +309,22 @@ export default function NewProjectPage() {
                       {clipLoopSec > 6 && ` · ${cappedScenes} scenes, each clip loops ~${clipLoopSec.toFixed(0)}s`}
                     </span>
                   )}
-                  <button
-                    type="button"
-                    onClick={() => { setScript(TAKAYAMA_SCRIPT); setTitle('Takayama') }}
-                    style={{ marginLeft: 'auto', fontSize: '11px', padding: '2px 8px', opacity: 0.5, background: 'transparent', border: '1px solid currentColor', borderRadius: '4px', cursor: 'pointer', color: 'inherit' }}
-                  >
-                    Takayama
-                  </button>
+                  <div style={{ marginLeft: 'auto', display: 'flex', gap: '6px' }}>
+                    <button
+                      type="button"
+                      onClick={() => { setScript(TAKAYAMA_1MIN); setTitle('Takayama 1 min') }}
+                      style={{ fontSize: '11px', padding: '2px 8px', opacity: 0.5, background: 'transparent', border: '1px solid currentColor', borderRadius: '4px', cursor: 'pointer', color: 'inherit' }}
+                    >
+                      Takayama 1 min
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => { setScript(TAKAYAMA_3MIN); setTitle('Takayama 3 min') }}
+                      style={{ fontSize: '11px', padding: '2px 8px', opacity: 0.5, background: 'transparent', border: '1px solid currentColor', borderRadius: '4px', cursor: 'pointer', color: 'inherit' }}
+                    >
+                      Takayama 3 min
+                    </button>
+                  </div>
                 </label>
                 <textarea
                   className="script-textarea"
