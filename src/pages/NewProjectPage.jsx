@@ -83,8 +83,12 @@ export default function NewProjectPage() {
       })
 
       if (!res.ok) {
-        const { error: msg } = await res.json()
-        throw new Error(msg || `Server error ${res.status}`)
+        let msg = `Server error ${res.status}`
+        try {
+          const body = await res.json()
+          msg = body.error || body.message || msg
+        } catch {}
+        throw new Error(msg)
       }
 
       const data = await res.json()
