@@ -214,8 +214,13 @@ export default function NewProjectPage() {
         status: 'pending',
       }))
 
-      const { error: scenesErr } = await supabase.from('scenes').insert(scenes)
-      if (scenesErr) throw new Error(scenesErr.message)
+      // Insert in chunks of 20 — Supabase silently truncates large single-batch
+      // inserts at the server's max_rows setting with no error returned.
+      const CHUNK = 20
+      for (let i = 0; i < scenes.length; i += CHUNK) {
+        const { error: scenesErr } = await supabase.from('scenes').insert(scenes.slice(i, i + CHUNK))
+        if (scenesErr) throw new Error(`Scene insert failed (rows ${i}–${i + CHUNK}): ${scenesErr.message}`)
+      }
 
       navigate(`/project/${project.id}`)
     } catch (err) {
