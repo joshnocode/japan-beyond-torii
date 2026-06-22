@@ -49,7 +49,27 @@ export default async function handler(req, res) {
 
   if (projErr || !project) return res.status(404).json({ error: 'Project not found' })
 
-  const missing = (scenes || []).filter(s => !s.video_url)
+  // Deduplicate by scene_index before assembly — keep the row with a video_url,
+  // then image_url, then whichever came first. This prevents repeated clips in
+  // the final video even if duplicate rows exist in the database.
+  const rawCount = (scenes || []).length
+  const deduped = new Map()
+  for (const s of (scenes || [])) {
+    const existing = deduped.get(s.scene_index)
+    if (!existing || (!existing.video_url && s.video_url)) deduped.set(s.scene_index, s)
+  }
+  const dedupedScenes = [...deduped.values()].sort((a, b) => a.scene_index - b.scene_index)
+  const dupCount = rawCount - dedupedScenes.length
+
+  // Replace scenes reference with deduplicated list
+  const scenesForAssembly = dedupedScenes
+
+  // Also detect duplicate video_url values (different indices, same clip file)
+  const urlCount = new Map()
+  for (const s of scenesForAssembly) { if (s.video_url) urlCount.set(s.video_url, (urlCount.get(s.video_url) || 0) + 1) }
+  const sharedUrls = [...urlCount.entries()].filter(([, n]) => n > 1)
+
+  const missing = scenesForAssembly.filter(s => !s.video_url)
   if (missing.length) return res.status(400).json({ error: `${missing.length} scenes are missing video` })
 
   await supabase.from('projects')
@@ -67,10 +87,14 @@ export default async function handler(req, res) {
     const ffmpeg = await getFFmpeg()
     log.push(`[${ts()}] ffmpeg ready`)
 
+    // Log dedup results
+    if (dupCount > 0) log.push(`[${ts()}] ⚠ deduped ${dupCount} duplicate rows before assembly`)
+    if (sharedUrls.length > 0) log.push(`[${ts()}] ⚠ ${sharedUrls.length} video URL(s) shared across scenes: ${sharedUrls.map(([u, n]) => `${n}×${u.split('/').pop()}`).join(', ')}`)
+
     // Download clips and audio in parallel
-    log.push(`[${ts()}] downloading ${scenes.length} clips + audio`)
+    log.push(`[${ts()}] downloading ${scenesForAssembly.length} clips + audio${dupCount > 0 ? ` (${dupCount} duplicates removed)` : ''}`)
     const [clips, audioBuf] = await Promise.all([
-      Promise.all(scenes.map(async (s) => {
+      Promise.all(scenesForAssembly.map(async (s) => {
         const resp = await fetch(s.video_url)
         if (!resp.ok) throw new Error(`Scene ${s.scene_index + 1} download failed (HTTP ${resp.status})`)
         const buf = Buffer.from(await resp.arrayBuffer())
@@ -112,8 +136,8 @@ export default async function handler(req, res) {
     const briefScenes = project.brief?.scenes || []
     const briefDurMap = new Map(briefScenes.map(s => [s.scene_number - 1, s.duration_sec]))
     const totalBriefDur = briefScenes.reduce((sum, s) => sum + (s.duration_sec || 0), 0)
-    const fallbackDur = (audioDurSec && scenes.length)
-      ? audioDurSec / scenes.length
+    const fallbackDur = (audioDurSec && scenesForAssembly.length)
+      ? audioDurSec / scenesForAssembly.length
       : 5
     const getClipDur = (scene_index) => {
       const d = briefDurMap.get(scene_index)
@@ -124,7 +148,7 @@ export default async function handler(req, res) {
     log.push(`[${ts()}] using director durations (fallback=${fallbackDur.toFixed(1)}s)`)
 
     // Encode each clip, looping it to match its director-assigned duration
-    log.push(`[${ts()}] encoding ${scenes.length} clips`)
+    log.push(`[${ts()}] encoding ${scenesForAssembly.length} clips`)
     const scaledPaths = []
     for (const { scene_index, buf } of clips) {
       const origPath   = join(jobDir, `orig_${scene_index}.mp4`)

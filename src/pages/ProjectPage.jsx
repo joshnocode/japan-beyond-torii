@@ -27,6 +27,7 @@ export default function ProjectPage() {
 
   const [project, setProject]   = useState(null)
   const [scenes, setScenes]     = useState([])
+  const [rawScenes, setRawScenes] = useState([])   // undeduped, for duplicate detection
   const [loading, setLoading]   = useState(true)
   const [error, setError]       = useState('')
   const [phase, setPhase]       = useState('idle')      // idle | images | videos
@@ -89,9 +90,11 @@ export default function ProjectPage() {
       ])
       if (projErr || !proj) { setError('Project not found.'); setLoading(false); return }
       setProject(proj)
+      const allRows = sc || []
+      setRawScenes(allRows)
       // Deduplicate by scene_index (keep the most complete row per index)
       const byIndex = new Map()
-      for (const s of (sc || [])) {
+      for (const s of allRows) {
         const existing = byIndex.get(s.scene_index)
         if (!existing || (!existing.video_url && s.video_url) || (!existing.image_url && s.image_url)) {
           byIndex.set(s.scene_index, s)
@@ -659,6 +662,13 @@ export default function ProjectPage() {
           ))}
         </div>
 
+        {/* ── Duplicate clip report ── */}
+        <DuplicateReport
+          rawScenes={rawScenes}
+          projectId={id}
+          onFixed={loadProject}
+        />
+
         {/* ── Alignment report ── */}
         {brief && scenes.length > 0 && (
           <AlignmentReport brief={brief} sceneCount={scenes.length} />
@@ -857,6 +867,205 @@ function SceneCard({ scene, scriptExcerpt, isActive, activeAction, phase, idlePh
         </div>
       )}
     </>
+  )
+}
+
+// ── Duplicate Report ───────────────────────────────────────────
+function DuplicateReport({ rawScenes, projectId, onFixed }) {
+  const [fixing, setFixing] = useState(false)
+  const [fixMsg, setFixMsg]  = useState('')
+
+  if (!rawScenes.length) return null
+
+  // ── Detect: duplicate scene_index (same position inserted twice)
+  const byIndex = {}
+  for (const s of rawScenes) {
+    if (!byIndex[s.scene_index]) byIndex[s.scene_index] = []
+    byIndex[s.scene_index].push(s)
+  }
+  const dupIndexGroups = Object.entries(byIndex)
+    .filter(([, rows]) => rows.length > 1)
+    .sort(([a], [b]) => Number(a) - Number(b))
+
+  // ── Detect: same video_url across different scene indices
+  const byVideoUrl = {}
+  for (const s of rawScenes) {
+    if (!s.video_url) continue
+    if (!byVideoUrl[s.video_url]) byVideoUrl[s.video_url] = []
+    byVideoUrl[s.video_url].push(s.scene_index)
+  }
+  const dupVideoGroups = Object.entries(byVideoUrl)
+    .filter(([, idxs]) => [...new Set(idxs)].length > 1)
+
+  // ── Detect: same image_url across different scene indices
+  const byImageUrl = {}
+  for (const s of rawScenes) {
+    if (!s.image_url) continue
+    if (!byImageUrl[s.image_url]) byImageUrl[s.image_url] = []
+    byImageUrl[s.image_url].push(s.scene_index)
+  }
+  const dupImageGroups = Object.entries(byImageUrl)
+    .filter(([, idxs]) => [...new Set(idxs)].length > 1)
+
+  const totalIssues = dupIndexGroups.length + dupVideoGroups.length + dupImageGroups.length
+  const isClean = totalIssues === 0
+
+  // ── Auto-fix: for each duplicate scene_index group, delete all but the most complete row
+  const handleFix = async () => {
+    setFixing(true)
+    setFixMsg('')
+    let deleted = 0
+    try {
+      for (const [, rows] of dupIndexGroups) {
+        // Keep: prefer row with video_url, then image_url, then first inserted
+        const keep = rows.slice().sort((a, b) => {
+          if (a.video_url && !b.video_url) return -1
+          if (!a.video_url && b.video_url) return 1
+          if (a.image_url && !b.image_url) return -1
+          if (!a.image_url && b.image_url) return 1
+          return 0
+        })[0]
+        const toDelete = rows.filter(r => r.id !== keep.id).map(r => r.id)
+        for (const rowId of toDelete) {
+          await supabase.from('scenes').delete().eq('id', rowId)
+          deleted++
+        }
+      }
+      setFixMsg(`Removed ${deleted} duplicate row${deleted !== 1 ? 's' : ''}. Reloading…`)
+      setTimeout(() => { onFixed(); setFixMsg('') }, 800)
+    } catch (err) {
+      setFixMsg(`Fix failed: ${err.message}`)
+    } finally {
+      setFixing(false)
+    }
+  }
+
+  const copyReport = () => {
+    const lines = [
+      `DUPLICATE CLIP REPORT`,
+      `Project: ${projectId}`,
+      `DB rows: ${rawScenes.length} | Unique indices: ${Object.keys(byIndex).length} | Issues: ${totalIssues}`,
+      '',
+    ]
+
+    if (dupIndexGroups.length) {
+      lines.push(`── DUPLICATE SCENE INDICES (${dupIndexGroups.length} positions with multiple rows) ──`)
+      for (const [idx, rows] of dupIndexGroups) {
+        lines.push(`  Scene ${Number(idx) + 1} (index ${idx}) — ${rows.length} rows:`)
+        for (const r of rows) {
+          lines.push(`    id:${r.id} status:${r.status} image:${r.image_url ? '✓' : '✗'} video:${r.video_url ? '✓' : '✗'} video_url:${r.video_url || 'null'}`)
+        }
+      }
+      lines.push('')
+    }
+
+    if (dupVideoGroups.length) {
+      lines.push(`── DUPLICATE VIDEO URLS (${dupVideoGroups.length} clips shared across scenes) ──`)
+      for (const [url, idxs] of dupVideoGroups) {
+        lines.push(`  Scenes [${[...new Set(idxs)].map(i => i + 1).join(', ')}] share: ${url}`)
+      }
+      lines.push('')
+    }
+
+    if (dupImageGroups.length) {
+      lines.push(`── DUPLICATE IMAGE URLS (${dupImageGroups.length} images shared across scenes) ──`)
+      for (const [url, idxs] of dupImageGroups) {
+        lines.push(`  Scenes [${[...new Set(idxs)].map(i => i + 1).join(', ')}] share: ${url}`)
+      }
+      lines.push('')
+    }
+
+    lines.push(`── RAW SCENE DATA (all ${rawScenes.length} rows) ──`)
+    lines.push(JSON.stringify(rawScenes.map(s => ({
+      id: s.id, scene_index: s.scene_index, status: s.status,
+      has_image: !!s.image_url, has_video: !!s.video_url,
+      image_url: s.image_url, video_url: s.video_url,
+      video_request_id: s.video_request_id,
+    })), null, 2))
+
+    navigator.clipboard.writeText(lines.join('\n'))
+  }
+
+  return (
+    <details className="brief-detail-section" open={!isClean}>
+      <summary>
+        Duplicate Clip Report
+        {!isClean && (
+          <span style={{ marginLeft: '8px', color: '#f44336', fontWeight: 600, fontSize: '13px' }}>
+            ⚠ {totalIssues} issue{totalIssues !== 1 ? 's' : ''} detected
+          </span>
+        )}
+        {isClean && (
+          <span style={{ marginLeft: '8px', color: '#4caf50', fontSize: '13px' }}>✓ clean</span>
+        )}
+      </summary>
+
+      <div style={{ padding: '12px 0' }}>
+        <div style={{
+          background: isClean ? '#1a3a1a' : '#3a1a1a',
+          border: `1px solid ${isClean ? '#4caf50' : '#f44336'}`,
+          borderRadius: '8px', padding: '12px 16px', marginBottom: '16px',
+          display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '12px',
+        }}>
+          <div>
+            <p style={{ fontWeight: 'bold', color: isClean ? '#4caf50' : '#f44336', marginBottom: '4px' }}>
+              {isClean
+                ? `✅ No duplicates — ${rawScenes.length} rows, all unique`
+                : `⚠️ ${rawScenes.length} total rows · ${dupIndexGroups.length} duplicate index${dupIndexGroups.length !== 1 ? 'es' : ''} · ${dupVideoGroups.length} shared video${dupVideoGroups.length !== 1 ? 's' : ''} · ${dupImageGroups.length} shared image${dupImageGroups.length !== 1 ? 's' : ''}`}
+            </p>
+            {fixMsg && <p style={{ fontSize: '13px', color: '#aaa', margin: 0 }}>{fixMsg}</p>}
+          </div>
+          <div style={{ display: 'flex', gap: '8px', flexShrink: 0 }}>
+            {!isClean && dupIndexGroups.length > 0 && (
+              <button type="button" className="btn-primary" style={{ fontSize: '12px', padding: '4px 12px' }}
+                onClick={handleFix} disabled={fixing}>
+                {fixing ? 'Fixing…' : `Auto-Fix ${dupIndexGroups.reduce((n, [, rows]) => n + rows.length - 1, 0)} rows`}
+              </button>
+            )}
+            <button type="button" className="btn-secondary" style={{ fontSize: '12px', padding: '4px 12px' }}
+              onClick={copyReport}>
+              Copy Report
+            </button>
+          </div>
+        </div>
+
+        {!isClean && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+            {dupIndexGroups.map(([idx, rows]) => (
+              <div key={idx} style={{ background: 'rgba(244,67,54,0.06)', border: '1px solid rgba(244,67,54,0.2)', borderRadius: '6px', padding: '10px 12px', fontSize: '12px' }}>
+                <p style={{ fontWeight: 600, color: '#f44336', marginBottom: '6px' }}>
+                  Scene {Number(idx) + 1} — {rows.length} rows for same position
+                </p>
+                {rows.map(r => (
+                  <div key={r.id} style={{ display: 'flex', gap: '12px', color: '#aaa', fontFamily: 'monospace', marginBottom: '2px', flexWrap: 'wrap' }}>
+                    <span>id:{r.id.slice(0, 8)}…</span>
+                    <span>status:{r.status}</span>
+                    <span style={{ color: r.image_url ? '#4caf50' : '#666' }}>img:{r.image_url ? '✓' : '✗'}</span>
+                    <span style={{ color: r.video_url ? '#4caf50' : '#666' }}>vid:{r.video_url ? '✓' : '✗'}</span>
+                  </div>
+                ))}
+              </div>
+            ))}
+            {dupVideoGroups.map(([url, idxs]) => (
+              <div key={url} style={{ background: 'rgba(255,152,0,0.06)', border: '1px solid rgba(255,152,0,0.2)', borderRadius: '6px', padding: '10px 12px', fontSize: '12px' }}>
+                <p style={{ fontWeight: 600, color: '#ff9800', marginBottom: '4px' }}>
+                  Shared video clip — scenes [{[...new Set(idxs)].map(i => i + 1).join(', ')}]
+                </p>
+                <p style={{ fontFamily: 'monospace', color: '#888', wordBreak: 'break-all', margin: 0 }}>{url}</p>
+              </div>
+            ))}
+            {dupImageGroups.map(([url, idxs]) => (
+              <div key={url} style={{ background: 'rgba(255,152,0,0.06)', border: '1px solid rgba(255,152,0,0.2)', borderRadius: '6px', padding: '10px 12px', fontSize: '12px' }}>
+                <p style={{ fontWeight: 600, color: '#ff9800', marginBottom: '4px' }}>
+                  Shared source image — scenes [{[...new Set(idxs)].map(i => i + 1).join(', ')}]
+                </p>
+                <p style={{ fontFamily: 'monospace', color: '#888', wordBreak: 'break-all', margin: 0 }}>{url}</p>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </details>
   )
 }
 
