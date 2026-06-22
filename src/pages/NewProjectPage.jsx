@@ -413,6 +413,18 @@ export default function NewProjectPage() {
               <p className="tone-summary">{brief.tone_summary}</p>
             </div>
 
+            {brief.research_notes && (
+              <div className="brief-section">
+                <details>
+                  <summary style={{ cursor: 'pointer', fontWeight: 600, fontSize: '15px', userSelect: 'none' }}>
+                    Director's Historical Research
+                    <span style={{ fontSize: '12px', fontWeight: 400, color: 'var(--text-muted)', marginLeft: '8px' }}>what the director researched before writing prompts</span>
+                  </summary>
+                  <p style={{ marginTop: '10px', fontSize: '13px', lineHeight: '1.7', color: 'var(--text-secondary)', whiteSpace: 'pre-wrap' }}>{brief.research_notes}</p>
+                </details>
+              </div>
+            )}
+
             <div className="brief-section">
               <h3>Visual Style Guide <span style={{ fontSize: '12px', fontWeight: 400, color: 'var(--text-muted)', marginLeft: '8px' }}>Director's suggestion — edit before generating</span></h3>
               <textarea
