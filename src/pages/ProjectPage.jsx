@@ -121,7 +121,10 @@ export default function ProjectPage() {
         const res = await fetch(`${API_BASE}/api/generate-image`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ image_prompt: scene.image_prompt }),
+          body: JSON.stringify({
+            image_prompt: scene.image_prompt,
+            style_guide: project?.brief?.visual_style_guide || '',
+          }),
         })
         if (!res.ok) throw new Error((await res.json()).error || `HTTP ${res.status}`)
         const { image_url } = await res.json()
@@ -131,7 +134,7 @@ export default function ProjectPage() {
       }
     }
     throw lastErr
-  }, [])
+  }, [project?.brief?.visual_style_guide])
 
   // ── Cloud video polling — polls all queued request_ids until done ──
   const pollPendingVideos = useCallback(async () => {

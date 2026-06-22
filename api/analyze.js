@@ -17,33 +17,16 @@ Think like Scorsese: vary the rhythm. Don't give every scene the same duration. 
 CONSTRAINT: scene durations must sum to approximately estimated_duration_seconds (provided). You have creative freedom within ±10%.
 CONSTRAINT: total scene count must not exceed max_scenes (provided). Aim for 40–120 scenes for most scripts.
 
+You will also produce a visual_style_guide — a single rich paragraph written for the image generation model. Derive it entirely from the script's historical period, geography, and subject matter. Structure it as:
+ERA: [specific period and decade] | REGION: [geographic setting and landscape character] | CHARACTERS: [for each character type that appears, list their name and specific garment terms with colors and materials — be as precise as a costume designer's call sheet] | SETTINGS: [the specific architectural/material/lighting details that define this world] | NEVER: [anachronistic elements that must be excluded, derived from the era]
+
 For each scene output:
 - scene_number: sequential integer starting at 1
 - duration_sec: integer — how long this clip plays on screen (3–60)
 - script_excerpt: the narration text that plays during this scene (your choice of what to include — can be a phrase, a sentence, or a paragraph)
 - description: 1-2 sentence visual description
-- image_prompt: detailed FLUX photorealistic prompt following ALL rules below.
+- image_prompt: a focused shot description for this scene only. The visual_style_guide will be prepended automatically at generation time, so do NOT repeat era, costume details, or period context here. Describe: subject (using character shorthand that matches your visual_style_guide, e.g. "a Hida carpenter"), camera angle and distance, specific action or pose, lighting quality and direction, composition technique (rule of thirds, leading lines, foreground frame). Human figures must be seen from behind, three-quarter rear, or at significant distance — never facing camera, never face close-up. Default to architecture or landscape (70%+ of scenes); use human figures only when the narration explicitly names a person or action. End every prompt with: "photorealistic 8K, historical documentary, cinematic lighting"
 - motion_prompt: one physical camera move — slow dolly forward through [element], aerial drone descent over [landmark], low-angle tracking shot following [subject], sweeping crane reveal of [vista], parallax push past [foreground] revealing [background], or steadicam walk through [space]. Always specify slow/very slow speed.
-
-IMAGE PROMPT RULES — read carefully, every rule is mandatory:
-
-STYLE: Photorealistic 8K cinematic photography. National Geographic historical documentary aesthetic. No digital art, no illustration, no painting, no watercolor, no anime, no sketch, no stylized rendering. No text, writing, maps, or documents in frame.
-
-ERA: Every image must be set in feudal Japan, specifically the Edo period, 1600s–1700s. Zero anachronisms. If you cannot place the subject clearly in pre-industrial 17th-century Japan, choose architecture or landscape instead.
-
-SUBJECT CHOICE — default to architecture or landscape (at least 70% of scenes):
-Architecture/landscape subjects: aged cryptomeria cedar temple gate, moss-covered stone steps, snow-laden thatched roof, mountain cedar forest, terraced rice paddies, sake brewery courtyard, castle stone foundation, river valley at dawn. Include specific textures: rain-darkened wood, lichened stone, weathered plaster, hand-packed earth.
-
-HUMAN FIGURES — use for at most 30% of scenes, only when the narration explicitly names a person or action:
-• Camera angle MUST be from behind, three-quarter rear, or at significant distance. Never a face close-up. Never facing the camera directly.
-• Clothing MUST use specific Edo-period terms: kosode (wraparound cotton work robe), hakama (pleated trousers), momohiki (tight working trousers), fundoshi (loincloth underlayer visible at hem), tabi (split-toe cotton socks), waraji (woven rice-straw sandals), tenugui (indigo cotton headband tied around forehead). Colors: undyed natural linen, indigo-dyed cotton, dark persimmon-brown hemp, charcoal grey.
-• Setting MUST contain period-accurate props only: hand-forged iron chisels and adzes, wooden mallets, clay and wattle walls, earthen floor, split-cedar ceiling planks, rice-straw tatami, paper shoji screens, pine-pitch torches or oil lanterns, stacked cedar logs.
-• Example human subjects: Hida carpenter seen from behind, kneeling over a cedar plank with an iron hand-plane, wearing indigo momohiki and a natural hemp kosode; Tokugawa official seen from distance, standing in castle courtyard, wearing formal kariginu court robe and lacquered eboshi cap; merchant seen from rear, carrying rope-bound timber bale through snow-dusted earthen street.
-
-ABSOLUTE NEVER LIST — if any of these appear, the prompt has failed:
-Cars, trucks, bicycles, motorcycles, trains, modern vehicles of any kind. Electric lighting, power lines, light switches, outlets. Modern buildings, glass-and-steel structures, concrete, asphalt. Industrial machinery, power tools, chain saws, metal scaffolding. Western clothing, suits, jeans, t-shirts, sneakers, modern shoes, glasses. Contemporary hairstyles. Plastic, nylon, synthetic materials. Fluorescent or LED lighting.
-
-END ANCHOR — every image_prompt must end with this exact phrase: "Edo period Japan 1690s, photorealistic 8K, historical documentary, cinematic lighting, no modern elements, no anachronisms"
 
 Return ONLY valid JSON — no markdown fences, no explanation.
 
@@ -52,6 +35,7 @@ Return ONLY valid JSON — no markdown fences, no explanation.
   "estimated_duration_seconds": <from user message>,
   "scene_count": <total scenes you chose>,
   "tone_summary": "2-3 sentences on visual tone, pacing strategy, and emotional arc",
+  "visual_style_guide": "ERA: ... | REGION: ... | CHARACTERS: ... | SETTINGS: ... | NEVER: ...",
   "scenes": [
     {
       "scene_number": 1,

@@ -84,6 +84,7 @@ export default function NewProjectPage() {
   const [script, setScript] = useState('')
   const [phase, setPhase] = useState('input') // input | analyzing | brief | saving
   const [brief, setBrief] = useState(null)
+  const [styleGuide, setStyleGuide] = useState('')
   const [error, setError] = useState('')
   const [debugInfo, setDebugInfo] = useState(null)
   const [analyzeMsg, setAnalyzeMsg] = useState('Claude is parsing your script into scenes and generating prompts…')
@@ -165,6 +166,7 @@ export default function NewProjectPage() {
             const data = parsed.data
             if (!title.trim() && data.title) setTitle(data.title)
             setBrief(data)
+            setStyleGuide(data.visual_style_guide || '')
             setPhase('brief')
             return
           }
@@ -190,13 +192,15 @@ export default function NewProjectPage() {
     setError('')
 
     try {
+      const briefWithStyle = { ...brief, visual_style_guide: styleGuide }
+
       const { data: project, error: insertErr } = await supabase
         .from('projects')
         .insert({
           user_id: session.user.id,
           title: title.trim() || brief.title || 'Untitled Project',
           script,
-          brief,
+          brief: briefWithStyle,
           status: 'draft',
           cost_cents: Math.round((brief.cost_estimate?.total_usd || 0) * 100),
         })
@@ -231,6 +235,7 @@ export default function NewProjectPage() {
 
   const handleCancel = () => {
     setBrief(null)
+    setStyleGuide('')
     setPhase('input')
     setError('')
   }
@@ -406,6 +411,17 @@ export default function NewProjectPage() {
             <div className="brief-section">
               <h3>Tone &amp; Style</h3>
               <p className="tone-summary">{brief.tone_summary}</p>
+            </div>
+
+            <div className="brief-section">
+              <h3>Visual Style Guide <span style={{ fontSize: '12px', fontWeight: 400, color: 'var(--text-muted)', marginLeft: '8px' }}>Director's suggestion — edit before generating</span></h3>
+              <textarea
+                value={styleGuide}
+                onChange={e => setStyleGuide(e.target.value)}
+                rows={5}
+                style={{ width: '100%', background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.12)', borderRadius: '6px', color: 'var(--text-primary)', fontSize: '13px', lineHeight: '1.6', padding: '10px 12px', resize: 'vertical', fontFamily: 'inherit', boxSizing: 'border-box' }}
+                placeholder="ERA: ... | REGION: ... | CHARACTERS: ... | SETTINGS: ... | NEVER: ..."
+              />
             </div>
 
             <div className="brief-section">

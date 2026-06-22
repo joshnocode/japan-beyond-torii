@@ -10,8 +10,12 @@ export default async function handler(req, res) {
   if (req.method === 'OPTIONS') return res.status(200).end()
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' })
 
-  const { image_prompt } = req.body || {}
+  const { image_prompt, style_guide } = req.body || {}
   if (!image_prompt?.trim()) return res.status(400).json({ error: 'image_prompt is required' })
+
+  const fullPrompt = style_guide?.trim()
+    ? `${style_guide.trim()}\n\n${image_prompt.trim()}`
+    : image_prompt.trim()
 
   const apiKey = process.env.FAL_API_KEY || process.env.VITE_FAL_API_KEY
   if (!apiKey) return res.status(500).json({ error: 'FAL_API_KEY is not configured' })
@@ -21,8 +25,8 @@ export default async function handler(req, res) {
   try {
     const result = await fal.subscribe('fal-ai/flux-pro/v1.1-ultra', {
       input: {
-        prompt: image_prompt,
-        negative_prompt: 'anime, illustration, cartoon, painting, watercolor, ink, sketch, cel-shaded, drawing, comic book, digital art, stylized, flat, 2D, text, writing, maps, documents, scrolls, letters, captions, signs with text',
+        prompt: fullPrompt,
+        negative_prompt: 'anime, illustration, cartoon, painting, watercolor, ink, sketch, cel-shaded, drawing, comic book, digital art, stylized, flat, 2D, text, writing, maps, documents, scrolls, letters, captions, signs with text, modern clothing, western clothing, jeans, t-shirt, sneakers, suit, tie, contemporary hairstyle, glasses, wristwatch, cars, trucks, motorcycles, bicycles, trains, vehicles, electric lights, power lines, neon signs, concrete, asphalt, glass and steel buildings, metal scaffolding, power tools, plastic, synthetic fabric, fluorescent lighting, LED lighting',
         aspect_ratio: '9:16',
         output_format: 'jpeg',
         safety_tolerance: '2',
