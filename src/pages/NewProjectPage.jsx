@@ -5,6 +5,19 @@ import { useAuth } from '../hooks/useAuth'
 
 const API_BASE = import.meta.env.DEV ? 'http://localhost:3000' : ''
 
+// 65 words exactly → Math.round(65 / 130 * 60) = 30s
+const TAKAYAMA_30SEC = `In 1692, the Tokugawa Shogunate seized Takayama — deep in the Japanese Alps.
+
+Not through war. Through paperwork.
+
+A single decree dissolved a local dynasty and made this mountain city the property of the Shogun.
+
+He wanted its timber. Its legendary Hida carpenters. Its wealth.
+
+What he couldn't predict — that in seizing Takayama, he would preserve it.
+
+The city he took became the city that survived.`
+
 const TAKAYAMA_1MIN = `In 1692, the Tokugawa Shogunate did something it almost never did.
 
 It reached deep into the Japanese Alps and seized direct control of Takayama.
@@ -320,6 +333,13 @@ export default function NewProjectPage() {
                     </span>
                   )}
                   <div style={{ marginLeft: 'auto', display: 'flex', gap: '6px' }}>
+                    <button
+                      type="button"
+                      onClick={() => { setScript(TAKAYAMA_30SEC); setTitle('Takayama 30 sec') }}
+                      style={{ fontSize: '11px', padding: '2px 8px', opacity: 0.5, background: 'transparent', border: '1px solid currentColor', borderRadius: '4px', cursor: 'pointer', color: 'inherit' }}
+                    >
+                      Takayama 30 sec
+                    </button>
                     <button
                       type="button"
                       onClick={() => { setScript(TAKAYAMA_1MIN); setTitle('Takayama 1 min') }}
