@@ -131,7 +131,7 @@ function segmentScript(script, sceneCount) {
   return segments
 }
 
-function parseResponse(text) {
+function parseResponse(text, serverDurSec) {
   // Strip markdown fences
   text = text.replace(/^```(?:json)?\s*/m, '').replace(/```\s*$/m, '').trim()
 
@@ -160,6 +160,11 @@ function parseResponse(text) {
         per_scene_breakdown: 'Each scene: $0.06 image + $0.05 video = $0.11',
       }
     }
+    // Server's word-count duration is authoritative — Claude must not override it.
+    // This prevents the AI from inflating short dramatic scripts to 90s when the
+    // script is only 65 words (30s). Pin it before scene duration math runs.
+    if (serverDurSec) obj.estimated_duration_seconds = serverDurSec
+
     // Keep only complete scenes
     if (Array.isArray(obj.scenes)) {
       obj.scenes = obj.scenes
@@ -312,7 +317,7 @@ export default async function handler(req, res) {
       messages: [{ role: 'user', content: userMessage }],
     })
     const raw = await stream.finalText()
-    const brief = parseResponse(raw)
+    const brief = parseResponse(raw, estimatedDurSec)
 
     if (!brief.scenes?.length) {
       send({ type: 'error', message: 'No scenes were parsed from the script. Try a shorter script or check the format.' })
