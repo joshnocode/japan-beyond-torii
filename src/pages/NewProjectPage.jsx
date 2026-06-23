@@ -330,7 +330,7 @@ export default function NewProjectPage() {
                   Script
                   {wordCount > 0 && (
                     <span className="word-count">
-                      {wordCount} words · ~{Math.floor(wordCount / 130)}m{String(Math.round((wordCount / 130 % 1) * 60)).padStart(2, '0')}s
+                      {wordCount} words · ~{estimatedDurSec < 60 ? `${estimatedDurSec}s` : `${Math.floor(estimatedDurSec / 60)}m${String(estimatedDurSec % 60).padStart(2, '0')}s`}
                       {clipLoopSec > 6 && ` · ${cappedScenes} scenes, each clip loops ~${clipLoopSec.toFixed(0)}s`}
                     </span>
                   )}
