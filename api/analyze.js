@@ -135,83 +135,73 @@ function parseResponse(text, serverDurSec) {
   // Strip markdown fences
   text = text.replace(/^```(?:json)?\s*/m, '').replace(/```\s*$/m, '').trim()
 
-  // Fast path — already valid
-  try { return JSON.parse(text) } catch {}
-
-  // Strip anything before the first `{`
-  const start = text.indexOf('{')
-  if (start > 0) text = text.slice(start)
-
-  // Try closing any open structures left by truncation
-  const repaired = closeOpenStructures(text)
-
+  // Parse — try clean JSON first, then attempt repair for truncated responses
+  let obj
   try {
-    const obj = JSON.parse(repaired)
-    // If cost_estimate was truncated/missing, synthesise a default from scene_count
-    if (!obj.cost_estimate && obj.scene_count) {
-      const n = obj.scene_count
-      const img = +(n * 0.06).toFixed(2)
-      const vid = +(n * 0.05).toFixed(2)
-      obj.cost_estimate = {
-        image_generation_usd: img,
-        video_generation_usd: vid,
-        claude_api_usd: 0.02,
-        total_usd: +(img + vid + 0.02).toFixed(2),
-        per_scene_breakdown: 'Each scene: $0.06 image + $0.05 video = $0.11',
-      }
+    obj = JSON.parse(text)
+  } catch {
+    const start = text.indexOf('{')
+    if (start > 0) text = text.slice(start)
+    const repaired = closeOpenStructures(text)
+    try {
+      obj = JSON.parse(repaired)
+    } catch (e) {
+      throw new Error(`JSON repair failed: ${e.message}`)
     }
-    // Server's word-count duration is authoritative — Claude must not override it.
-    // This prevents the AI from inflating short dramatic scripts to 90s when the
-    // script is only 65 words (30s). Pin it before scene duration math runs.
-    if (serverDurSec) obj.estimated_duration_seconds = serverDurSec
-
-    // Keep only complete scenes
-    if (Array.isArray(obj.scenes)) {
-      obj.scenes = obj.scenes
-        .filter((s) => s && s.scene_number && s.image_prompt && s.motion_prompt)
-      obj.scene_count = obj.scenes.length
-    }
-
-    // Override director's duration_sec with word-count-proportional values so that
-    // video cuts align with the actual narration speaking time, not creative guesses.
-    // The director decides WHERE to cut; math decides HOW LONG each cut holds.
-    if (Array.isArray(obj.scenes) && obj.scenes.length > 0 && obj.estimated_duration_seconds > 0) {
-      const totalDurSec = obj.estimated_duration_seconds
-      const wordCounts = obj.scenes.map(s =>
-        Math.max(1, (s.script_excerpt || '').split(/\s+/).filter(Boolean).length)
-      )
-      const totalWords = wordCounts.reduce((a, b) => a + b, 0)
-      let assigned = 0
-      obj.scenes = obj.scenes.map((s, i) => {
-        let dur
-        if (i === obj.scenes.length - 1) {
-          dur = Math.max(3, Math.round(totalDurSec) - assigned)
-        } else {
-          dur = Math.max(3, Math.round((wordCounts[i] / totalWords) * totalDurSec))
-          assigned += dur
-        }
-        return { ...s, duration_sec: dur }
-      })
-    } else if (Array.isArray(obj.scenes)) {
-      obj.scenes = obj.scenes.map(s => ({ ...s, duration_sec: 5 }))
-    }
-    // Always recalculate cost from actual scene count so the UI numbers are consistent
-    if (obj.scene_count) {
-      const n = obj.scene_count
-      const img = +(n * 0.06).toFixed(2)
-      const vid = +(n * 0.05).toFixed(2)
-      obj.cost_estimate = {
-        image_generation_usd: img,
-        video_generation_usd: vid,
-        claude_api_usd: 0.02,
-        total_usd: +(img + vid + 0.02).toFixed(2),
-        per_scene_breakdown: 'Each scene: $0.06 image + $0.05 video = $0.11',
-      }
-    }
-    return obj
-  } catch (e) {
-    throw new Error(`JSON repair failed: ${e.message}`)
   }
+
+  // ── All post-processing runs on every successful parse ────────────────────
+
+  // Server's word-count duration is authoritative. Claude frequently inflates
+  // short dramatic scripts (e.g. 65 words → 91s instead of 30s). Pin it first
+  // so every downstream calculation uses the correct total.
+  if (serverDurSec) obj.estimated_duration_seconds = serverDurSec
+
+  // Keep only complete scenes
+  if (Array.isArray(obj.scenes)) {
+    obj.scenes = obj.scenes
+      .filter((s) => s && s.scene_number && s.image_prompt && s.motion_prompt)
+    obj.scene_count = obj.scenes.length
+  }
+
+  // Override director's duration_sec with word-count-proportional values so
+  // video cuts align with narration speaking time, not the AI's guesses.
+  if (Array.isArray(obj.scenes) && obj.scenes.length > 0 && obj.estimated_duration_seconds > 0) {
+    const totalDurSec = obj.estimated_duration_seconds
+    const wordCounts = obj.scenes.map(s =>
+      Math.max(1, (s.script_excerpt || '').split(/\s+/).filter(Boolean).length)
+    )
+    const totalWords = wordCounts.reduce((a, b) => a + b, 0)
+    let assigned = 0
+    obj.scenes = obj.scenes.map((s, i) => {
+      let dur
+      if (i === obj.scenes.length - 1) {
+        dur = Math.max(3, Math.round(totalDurSec) - assigned)
+      } else {
+        dur = Math.max(3, Math.round((wordCounts[i] / totalWords) * totalDurSec))
+        assigned += dur
+      }
+      return { ...s, duration_sec: dur }
+    })
+  } else if (Array.isArray(obj.scenes)) {
+    obj.scenes = obj.scenes.map(s => ({ ...s, duration_sec: 5 }))
+  }
+
+  // Recalculate cost from actual scene count
+  if (obj.scene_count) {
+    const n = obj.scene_count
+    const img = +(n * 0.06).toFixed(2)
+    const vid = +(n * 0.05).toFixed(2)
+    obj.cost_estimate = {
+      image_generation_usd: img,
+      video_generation_usd: vid,
+      claude_api_usd: 0.02,
+      total_usd: +(img + vid + 0.02).toFixed(2),
+      per_scene_breakdown: 'Each scene: $0.06 image + $0.05 video = $0.11',
+    }
+  }
+
+  return obj
 }
 
 /**
