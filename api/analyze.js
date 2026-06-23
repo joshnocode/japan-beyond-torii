@@ -307,12 +307,27 @@ export default async function handler(req, res) {
       messages: [{ role: 'user', content: userMessage }],
     })
     const raw = await stream.finalText()
+
+    // Capture Claude's raw values before parseResponse overwrites them
+    let claudeRaw = {}
+    try { claudeRaw = JSON.parse(raw.replace(/^```(?:json)?\s*/m,'').replace(/```\s*$/m,'').trim()) } catch {}
+
     const brief = parseResponse(raw, estimatedDurSec)
+
+    const debug = {
+      server_word_count: narrationWords,
+      server_dur_sec: estimatedDurSec,
+      claude_estimated_duration_seconds: claudeRaw.estimated_duration_seconds ?? 'not found',
+      claude_scene_count: claudeRaw.scene_count ?? 'not found',
+      brief_estimated_duration_seconds: brief.estimated_duration_seconds,
+      brief_scene_count: brief.scene_count,
+      raw_first_500: raw.slice(0, 500),
+    }
 
     if (!brief.scenes?.length) {
       send({ type: 'error', message: 'No scenes were parsed from the script. Try a shorter script or check the format.' })
     } else {
-      send({ type: 'complete', data: brief })
+      send({ type: 'complete', data: brief, debug })
     }
   } catch (err) {
     console.error('analyze error:', err)

@@ -97,6 +97,7 @@ export default function NewProjectPage() {
   const [script, setScript] = useState('')
   const [phase, setPhase] = useState('input') // input | analyzing | brief | saving
   const [brief, setBrief] = useState(null)
+  const [briefDebug, setBriefDebug] = useState(null)
   const [styleGuide, setStyleGuide] = useState('')
   const [error, setError] = useState('')
   const [debugInfo, setDebugInfo] = useState(null)
@@ -179,6 +180,7 @@ export default function NewProjectPage() {
             const data = parsed.data
             if (!title.trim() && data.title) setTitle(data.title)
             setBrief(data)
+            setBriefDebug(parsed.debug || null)
             setStyleGuide(data.visual_style_guide || '')
             setPhase('brief')
             return
@@ -412,6 +414,33 @@ export default function NewProjectPage() {
             </div>
 
             {error && <p className="error-message">{error}</p>}
+
+            {briefDebug && (
+              <details style={{ marginBottom: '16px', background: 'rgba(255,255,0,0.04)', border: '1px solid rgba(255,255,0,0.15)', borderRadius: '8px', padding: '10px 14px' }}>
+                <summary style={{ cursor: 'pointer', fontSize: '12px', color: '#aaa', userSelect: 'none' }}>
+                  Server Debug
+                  {briefDebug.server_dur_sec !== briefDebug.brief_estimated_duration_seconds && (
+                    <span style={{ color: '#f44336', marginLeft: '8px', fontWeight: 600 }}>⚠ duration mismatch</span>
+                  )}
+                </summary>
+                <div style={{ marginTop: '10px', display: 'flex', flexDirection: 'column', gap: '4px', fontSize: '12px', fontFamily: 'monospace', color: '#ccc' }}>
+                  <div>server_word_count: <strong>{briefDebug.server_word_count}</strong></div>
+                  <div>server_dur_sec (authoritative): <strong style={{ color: '#4caf50' }}>{briefDebug.server_dur_sec}s</strong></div>
+                  <div>claude_estimated_duration_seconds: <strong style={{ color: briefDebug.claude_estimated_duration_seconds !== briefDebug.server_dur_sec ? '#f44336' : '#4caf50' }}>{briefDebug.claude_estimated_duration_seconds}s</strong></div>
+                  <div>brief_estimated_duration_seconds (final): <strong style={{ color: briefDebug.brief_estimated_duration_seconds !== briefDebug.server_dur_sec ? '#f44336' : '#4caf50' }}>{briefDebug.brief_estimated_duration_seconds}s</strong></div>
+                  <div>claude_scene_count: <strong>{briefDebug.claude_scene_count}</strong></div>
+                  <div>brief_scene_count (final): <strong>{briefDebug.brief_scene_count}</strong></div>
+                  <div style={{ marginTop: '6px', color: '#888' }}>raw_first_500: {briefDebug.raw_first_500}</div>
+                </div>
+                <button
+                  type="button"
+                  style={{ marginTop: '10px', fontSize: '11px', padding: '3px 10px', background: 'transparent', border: '1px solid #555', borderRadius: '4px', color: '#aaa', cursor: 'pointer' }}
+                  onClick={() => navigator.clipboard.writeText(JSON.stringify(briefDebug, null, 2))}
+                >
+                  Copy Debug JSON
+                </button>
+              </details>
+            )}
 
             <div className="brief-stats">
               <div className="stat-card">
