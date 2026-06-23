@@ -330,7 +330,7 @@ export default function NewProjectPage() {
                   Script
                   {wordCount > 0 && (
                     <span className="word-count">
-                      {wordCount} words · ~{Math.round(wordCount / 130)}m
+                      {wordCount} words · ~{Math.floor(wordCount / 130)}m{String(Math.round((wordCount / 130 % 1) * 60)).padStart(2, '0')}s
                       {clipLoopSec > 6 && ` · ${cappedScenes} scenes, each clip loops ~${clipLoopSec.toFixed(0)}s`}
                     </span>
                   )}
@@ -460,7 +460,7 @@ export default function NewProjectPage() {
                 <span className="stat-label">Scenes</span>
               </div>
               <div className="stat-card">
-                <span className="stat-value">{Math.round(brief.estimated_duration_seconds / 60)}:{String(brief.estimated_duration_seconds % 60).padStart(2, '0')}</span>
+                <span className="stat-value">{Math.floor(brief.estimated_duration_seconds / 60)}:{String(brief.estimated_duration_seconds % 60).padStart(2, '0')}</span>
                 <span className="stat-label">Est. Duration</span>
               </div>
               <div className="stat-card gold">
