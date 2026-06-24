@@ -261,7 +261,7 @@ export default function NewProjectPage() {
         <div className="header-left">
           <button className="btn-ghost" onClick={() => navigate('/dashboard')}>← Back</button>
           <span className="header-brand-mark">⛩</span>
-          <span className="header-brand">New Video</span>
+          <span className="header-brand">New Video <span style={{fontSize:'10px',opacity:0.4,fontWeight:400}}>v24Jun</span></span>
         </div>
       </header>
 
