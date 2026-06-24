@@ -157,6 +157,15 @@ function parseResponse(text, serverDurSec) {
   // so every downstream calculation uses the correct total.
   if (serverDurSec) obj.estimated_duration_seconds = serverDurSec
 
+  // Claude sometimes returns research_notes as a structured object (keyed by the
+  // numbered question labels like {period, geography, ...}) instead of a plain
+  // string. Flatten to a string so React can render it without throwing.
+  if (obj.research_notes && typeof obj.research_notes !== 'string') {
+    obj.research_notes = Object.entries(obj.research_notes)
+      .map(([k, v]) => `${k.toUpperCase()}: ${v}`)
+      .join('\n\n')
+  }
+
   // Keep only complete scenes
   if (Array.isArray(obj.scenes)) {
     obj.scenes = obj.scenes

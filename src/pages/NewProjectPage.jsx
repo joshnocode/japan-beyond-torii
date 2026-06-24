@@ -181,7 +181,7 @@ export default function NewProjectPage() {
             if (!title.trim() && data.title) setTitle(data.title)
             setBrief(data)
             setBriefDebug(parsed.debug || null)
-            setStyleGuide(data.visual_style_guide || '')
+            setStyleGuide(typeof data.visual_style_guide === 'string' ? data.visual_style_guide : '')
             setPhase('brief')
             return
           }
@@ -471,7 +471,7 @@ export default function NewProjectPage() {
 
             <div className="brief-section">
               <h3>Tone &amp; Style</h3>
-              <p className="tone-summary">{brief.tone_summary}</p>
+              <p className="tone-summary">{typeof brief.tone_summary === 'string' ? brief.tone_summary : JSON.stringify(brief.tone_summary)}</p>
             </div>
 
             {brief.research_notes && (
@@ -481,7 +481,7 @@ export default function NewProjectPage() {
                     Director's Historical Research
                     <span style={{ fontSize: '12px', fontWeight: 400, color: 'var(--text-muted)', marginLeft: '8px' }}>what the director researched before writing prompts</span>
                   </summary>
-                  <p style={{ marginTop: '10px', fontSize: '13px', lineHeight: '1.7', color: 'var(--text-secondary)', whiteSpace: 'pre-wrap' }}>{brief.research_notes}</p>
+                  <p style={{ marginTop: '10px', fontSize: '13px', lineHeight: '1.7', color: 'var(--text-secondary)', whiteSpace: 'pre-wrap' }}>{typeof brief.research_notes === 'string' ? brief.research_notes : JSON.stringify(brief.research_notes, null, 2)}</p>
                 </details>
               </div>
             )}
