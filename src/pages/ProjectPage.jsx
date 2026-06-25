@@ -112,7 +112,7 @@ export default function ProjectPage() {
   const patchProject = (patch) => setProject(p => ({ ...p, ...patch }))
 
   // ── Image generation with auto-retry ─────────────────────────
-  const generateImageWithRetry = useCallback(async (scene) => {
+  const generateImageWithRetry = useCallback(async (scene, referenceImageUrl) => {
     let lastErr
     for (let attempt = 0; attempt <= MAX_IMAGE_RETRIES; attempt++) {
       if (attempt > 0) {
@@ -127,6 +127,7 @@ export default function ProjectPage() {
           body: JSON.stringify({
             image_prompt: scene.image_prompt,
             style_guide: project?.brief?.visual_style_guide || '',
+            ...(referenceImageUrl ? { reference_image_url: referenceImageUrl } : {}),
           }),
         })
         if (!res.ok) throw new Error((await res.json()).error || `HTTP ${res.status}`)
@@ -221,6 +222,7 @@ export default function ProjectPage() {
     patchProject({ status: 'processing' })
 
     const pending = scenes.filter(s => !s.image_url)
+    let referenceImageUrl = null  // scene 1's image anchors color/light for all subsequent scenes
     for (const scene of pending) {
       if (!activeRef.current) break
       setCurrentIdx(scene.scene_index)
@@ -232,7 +234,7 @@ export default function ProjectPage() {
       patchScene(scene.id, { status: 'generating_image' })
 
       try {
-        const image_url = await generateImageWithRetry(scene)
+        const image_url = await generateImageWithRetry(scene, referenceImageUrl)
 
         const t = Date.now() - sceneStartRef.current
         const times = [...sceneTimesRef.current, t]
@@ -243,6 +245,7 @@ export default function ProjectPage() {
         patchScene(scene.id, { image_url, status: 'complete' })
 
         if (scene.scene_index === 0) {
+          referenceImageUrl = image_url  // lock scene 1 as the visual reference for all subsequent scenes
           await supabase.from('projects').update({ thumbnail_url: image_url }).eq('id', id)
           patchProject({ thumbnail_url: image_url })
         }

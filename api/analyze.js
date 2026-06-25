@@ -33,7 +33,9 @@ CONSTRAINT: total scene count must not exceed max_scenes (provided). Aim for 40�
 
 STEP 3 — VISUAL STYLE GUIDE (write in "visual_style_guide"):
 Using your research_notes as the only source of truth, write a precise style guide for the image generation model. Structure:
-ERA: [specific period and decade] | REGION: [geographic setting and landscape] | CHARACTERS: [for each person type: specific garment names, fabrics, colors, footwear, accessories — costume designer precision] | SETTINGS: [architecture, materials, light sources, textures, scale] | NEVER: [specific anachronisms to exclude, derived from your research]
+ERA: [specific period and decade] | REGION: [geographic setting and landscape] | CHARACTERS: [for each person type: specific garment names, fabrics, colors, footwear, accessories — costume designer precision] | SETTINGS: [architecture, materials, light sources, textures, scale] | NEVER: [specific anachronisms to exclude, derived from your research] | COLOR_TEMP: [e.g. warm 4200K late-afternoon] | TIME_OF_DAY: [single locked time — e.g. overcast midday, golden hour dawn, blue-hour dusk — consistent across the entire video] | LIGHT_DIR: [e.g. low side-light from east, soft diffuse overhead, rim-light from behind]
+
+Lock COLOR_TEMP, TIME_OF_DAY, and LIGHT_DIR for the entire video. Every scene must share the same ambient light quality — this is what makes cuts feel like the same world.
 
 STEP 4 — SCENES:
 For each scene:
@@ -45,6 +47,8 @@ For each scene:
 
   HUMAN FIGURE RULE — apply this test to every scene before writing the prompt:
   Does the script_excerpt contain (a) a named individual, OR (b) an explicit human action verb (walked, built, fought, seized, carried, gathered, knelt, etc.)? If YES → you may include a human figure, seen from behind, three-quarter rear, or at significant distance — never facing camera, never a close-up face. If NO → no human figures. Default to architecture, landscape, objects, or nature. This rule is mandatory, not a guideline.
+
+  VISUAL CONTINUITY RULE — for consecutive scenes set in the same physical location, anchor the new shot to a specific element from the previous scene: name a shared architectural feature, landmark, or natural object that appears in both (e.g. "the same moss-covered stone gate seen in the previous scene, now framed from below looking up"). This creates the feeling of a continuous camera moving through one world rather than cutting between unrelated images.
 
   End every prompt with: "photorealistic 8K, historical documentary, cinematic lighting"
 - motion_prompt: one physical camera move — slow dolly forward, aerial drone descent, low-angle tracking, sweeping crane reveal, parallax push, or steadicam walk. Always specify slow/very slow speed.
