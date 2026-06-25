@@ -41,7 +41,12 @@ For each scene:
 - duration_sec: integer 3–60
 - script_excerpt: the narration text for this scene
 - description: 1-2 sentence visual description
-- image_prompt: a focused shot description rooted in your research. The visual_style_guide will be prepended at generation time — do NOT repeat era or costume details. Describe: subject (use character shorthand from your style guide), camera angle/distance, specific action, lighting quality, composition. Human figures must be seen from behind, three-quarter rear, or at significant distance — never facing camera, never a close-up face. Default to architecture or landscape (70%+ of scenes); use human figures only when the narration explicitly names a person or action. End every prompt with: "photorealistic 8K, historical documentary, cinematic lighting"
+- image_prompt: a focused shot description rooted in your research. The visual_style_guide will be prepended at generation time — do NOT repeat era or costume details. Describe: subject (use character shorthand from your style guide), camera angle/distance, specific action, lighting quality, composition.
+
+  HUMAN FIGURE RULE — apply this test to every scene before writing the prompt:
+  Does the script_excerpt contain (a) a named individual, OR (b) an explicit human action verb (walked, built, fought, seized, carried, gathered, knelt, etc.)? If YES → you may include a human figure, seen from behind, three-quarter rear, or at significant distance — never facing camera, never a close-up face. If NO → no human figures. Default to architecture, landscape, objects, or nature. This rule is mandatory, not a guideline.
+
+  End every prompt with: "photorealistic 8K, historical documentary, cinematic lighting"
 - motion_prompt: one physical camera move — slow dolly forward, aerial drone descent, low-angle tracking, sweeping crane reveal, parallax push, or steadicam walk. Always specify slow/very slow speed.
 
 Return ONLY valid JSON — no markdown fences, no explanation.
