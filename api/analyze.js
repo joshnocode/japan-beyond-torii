@@ -43,15 +43,15 @@ For each scene:
 - duration_sec: integer 3–60
 - script_excerpt: the narration text for this scene
 - description: 1-2 sentence visual description
-- image_prompt: a focused shot description rooted in your research. The visual_style_guide will be prepended at generation time — do NOT repeat era or costume details. Describe: subject (use character shorthand from your style guide), camera angle/distance, specific action, lighting quality, composition.
+- image_prompt: a focused shot description rooted in your research. The visual_style_guide will be prepended at generation time — do NOT repeat era or costume details. Describe: subject (use character shorthand from your style guide), camera angle/distance, specific action, lighting quality, composition. Open every prompt with "Photorealistic cinematic 35mm documentary footage —" to anchor the model in live-action realism before any historical detail is introduced.
 
   HUMAN FIGURE RULE — apply this test to every scene before writing the prompt:
   Does the script_excerpt contain (a) a named individual, OR (b) an explicit human action verb (walked, built, fought, seized, carried, gathered, knelt, etc.)? If YES → you may include a human figure, seen from behind, three-quarter rear, or at significant distance — never facing camera, never a close-up face. If NO → no human figures. Default to architecture, landscape, objects, or nature. This rule is mandatory, not a guideline.
 
   VISUAL CONTINUITY RULE — for consecutive scenes set in the same physical location, anchor the new shot to a specific element from the previous scene: name a shared architectural feature, landmark, or natural object that appears in both (e.g. "the same moss-covered stone gate seen in the previous scene, now framed from below looking up"). This creates the feeling of a continuous camera moving through one world rather than cutting between unrelated images.
 
-  End every prompt with: "photorealistic 8K, historical documentary, cinematic lighting"
-- motion_prompt: one physical camera move — slow dolly forward, aerial drone descent, low-angle tracking, sweeping crane reveal, parallax push, or steadicam walk. Always specify slow/very slow speed.
+  End every prompt with: "photorealistic 8K, historical documentary, cinematic lighting, shot on 35mm film"
+- motion_prompt: one physical camera move — slow dolly forward, aerial drone descent, low-angle tracking, sweeping crane reveal, parallax push, or steadicam walk. Always specify slow/very slow speed. MOTION CONSTRAINT: prefer moves that push toward or pull away from the subject (dolly in/out, drone ascent/descent, slow zoom). Avoid fast lateral tracking across fine geometric surfaces — roof tiles, lattice screens, carved wood — as this causes motion artifacts. Wide landscape pans are safe; tight architectural tracking is not.
 
 Return ONLY valid JSON — no markdown fences, no explanation.
 

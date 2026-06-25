@@ -32,7 +32,7 @@ export default async function handler(req, res) {
           image_prompt: reference_image_url,
           image_prompt_strength: 0.12,
         } : {}),
-        negative_prompt: 'anime, illustration, cartoon, painting, watercolor, ink, sketch, cel-shaded, drawing, comic book, digital art, stylized, flat, 2D, text, writing, maps, documents, scrolls, letters, captions, signs with text, modern clothing, western clothing, jeans, t-shirt, sneakers, suit, tie, contemporary hairstyle, glasses, wristwatch, cars, trucks, motorcycles, bicycles, trains, vehicles, electric lights, power lines, neon signs, concrete, asphalt, glass and steel buildings, metal scaffolding, power tools, plastic, synthetic fabric, fluorescent lighting, LED lighting',
+        negative_prompt: 'ukiyo-e, woodblock print, woodblock, sumi-e, ink wash, Japanese illustration, ukiyo, woodcut, manga, anime, illustration, cartoon, painting, watercolor, ink, sketch, cel-shaded, drawing, comic book, digital art, stylized, flat, 2D, art print, decorative art, museum print, text, writing, maps, documents, scrolls, letters, captions, signs with text, modern clothing, western clothing, jeans, t-shirt, sneakers, suit, tie, contemporary hairstyle, glasses, wristwatch, cars, trucks, motorcycles, bicycles, trains, vehicles, electric lights, power lines, neon signs, concrete, asphalt, glass and steel buildings, metal scaffolding, power tools, plastic, synthetic fabric, fluorescent lighting, LED lighting',
         aspect_ratio: '9:16',
         output_format: 'jpeg',
         safety_tolerance: '2',
