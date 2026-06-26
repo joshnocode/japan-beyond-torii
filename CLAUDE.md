@@ -31,6 +31,44 @@ generation loop in ProjectPage.**
 
 ---
 
+## Non-Negotiable Core: Photorealism System
+
+These two components were validated to eliminate 2D illustration drift and
+Seedance motion warping. A Gemini evaluation showed the drift was causing
+lookalike scores of 5.4/10 vs photorealistic reference. After fixing, the user
+confirmed "THE CLEANEST EDITION YET." They must be preserved. If a future
+request would weaken or remove either of them, push back hard and explain the
+tradeoff before making any change.
+
+### 4. Photorealism Anchor (Director prompt — `api/analyze.js`, `api/generate-image.js`)
+Every image_prompt in STEP 4 must open with:
+`"Photorealistic cinematic 35mm documentary footage —"`
+This frontloads the medium signal before any historical vocabulary, preventing
+Flux from drifting toward ukiyo-e/woodblock/illustration style when it
+encounters period-specific terms like "merchant district" or "Hida carpenter."
+
+The negative_prompt in `api/generate-image.js` must include illustration-style
+tokens: `ukiyo-e, woodblock print, woodblock, sumi-e, ink wash, Japanese
+illustration, ukiyo, woodcut, manga, anime, illustration, cartoon, painting,
+watercolor, ink, sketch, cel-shaded, drawing, comic book, digital art, stylized,
+flat, 2D, art print, decorative art, museum print`.
+
+**Do not remove the "Photorealistic cinematic 35mm documentary footage —" opener
+from the STEP 4 instructions. Do not remove illustration tokens from the
+negative_prompt.**
+
+### 5. Motion Artifact Prevention (Director prompt — `api/analyze.js`)
+The MOTION CONSTRAINT in STEP 4 requires `motion_prompt` values to prefer moves
+that push toward or pull away from the subject (dolly in/out, drone
+ascent/descent, slow zoom). Lateral tracking across fine geometric surfaces —
+roof tiles, lattice screens, carved wood — causes spatial warping in Seedance
+2.0. Wide landscape pans are safe; tight architectural tracking is not.
+
+**Do not remove the MOTION CONSTRAINT or soften it to a preference. It must
+remain a hard constraint on motion_prompt generation.**
+
+---
+
 ## Other Architectural Decisions
 
 ### Human Figure Rule (Director prompt — `api/analyze.js`)
