@@ -13,9 +13,11 @@ export default async function handler(req, res) {
   const { image_prompt, style_guide, reference_image_url } = req.body || {}
   if (!image_prompt?.trim()) return res.status(400).json({ error: 'image_prompt is required' })
 
+  const PHOTO_PREFIX = 'Photorealistic cinematic 35mm documentary footage, crisp historical textures, zero illustration or anime — '
+
   const fullPrompt = style_guide?.trim()
-    ? `${style_guide.trim()}\n\n${image_prompt.trim()}`
-    : image_prompt.trim()
+    ? `${PHOTO_PREFIX}${style_guide.trim()}\n\n${image_prompt.trim()}`
+    : `${PHOTO_PREFIX}${image_prompt.trim()}`
 
   const apiKey = process.env.FAL_API_KEY || process.env.VITE_FAL_API_KEY
   if (!apiKey) return res.status(500).json({ error: 'FAL_API_KEY is not configured' })
