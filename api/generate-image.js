@@ -13,7 +13,7 @@ export default async function handler(req, res) {
   const { image_prompt, style_guide, reference_image_url } = req.body || {}
   if (!image_prompt?.trim()) return res.status(400).json({ error: 'image_prompt is required' })
 
-  const PHOTO_PREFIX = 'Photorealistic cinematic 35mm documentary footage, rich saturated colors, high contrast cinematic lighting, vivid and vibrant, crisp historical textures, zero illustration or anime — '
+  const PHOTO_PREFIX = 'Photorealistic cinematic 35mm documentary footage set in pre-modern historical Japan, rich saturated colors, high contrast cinematic lighting, vivid and vibrant, crisp historical textures, zero contemporary or modern elements, zero illustration or anime — '
 
   const fullPrompt = style_guide?.trim()
     ? `${PHOTO_PREFIX}${style_guide.trim()}\n\n${image_prompt.trim()}`
@@ -34,7 +34,7 @@ export default async function handler(req, res) {
           image_prompt: reference_image_url,
           image_prompt_strength: 0.12,
         } : {}),
-        negative_prompt: 'ukiyo-e, woodblock print, woodblock, sumi-e, ink wash, Japanese illustration, ukiyo, woodcut, manga, anime, illustration, cartoon, painting, watercolor, ink, sketch, cel-shaded, drawing, comic book, digital art, stylized, flat, 2D, art print, decorative art, museum print, text, writing, maps, documents, scrolls, letters, captions, signs with text, modern clothing, western clothing, jeans, t-shirt, sneakers, suit, tie, contemporary hairstyle, glasses, wristwatch, cars, trucks, motorcycles, bicycles, trains, vehicles, electric lights, power lines, neon signs, concrete, asphalt, glass and steel buildings, metal scaffolding, power tools, plastic, synthetic fabric, fluorescent lighting, LED lighting',
+        negative_prompt: 'ukiyo-e, woodblock print, woodblock, sumi-e, ink wash, Japanese illustration, ukiyo, woodcut, manga, anime, illustration, cartoon, painting, watercolor, ink, sketch, cel-shaded, drawing, comic book, digital art, stylized, flat, 2D, art print, decorative art, museum print, text, writing, maps, documents, scrolls, letters, captions, signs with text, modern clothing, western clothing, jeans, t-shirt, sneakers, suit, tie, contemporary hairstyle, glasses, wristwatch, taxi, cab, automobile, sedan, van, bus, cars, trucks, motorcycles, bicycles, trains, vehicles, modern road, paved road, parking lot, modern building, contemporary building, electric lights, power lines, neon signs, concrete, asphalt, glass and steel buildings, metal scaffolding, power tools, plastic, synthetic fabric, fluorescent lighting, LED lighting, telephone pole, telephone wire, vending machine',
         aspect_ratio: '9:16',
         output_format: 'jpeg',
         safety_tolerance: '2',
