@@ -13,7 +13,7 @@ export default async function handler(req, res) {
   const { image_prompt, style_guide, reference_image_url } = req.body || {}
   if (!image_prompt?.trim()) return res.status(400).json({ error: 'image_prompt is required' })
 
-  const PHOTO_PREFIX = 'Photorealistic cinematic 35mm documentary footage, crisp historical textures, zero illustration or anime — '
+  const PHOTO_PREFIX = 'Photorealistic cinematic 35mm documentary footage, rich saturated colors, high contrast cinematic lighting, vivid and vibrant, crisp historical textures, zero illustration or anime — '
 
   const fullPrompt = style_guide?.trim()
     ? `${PHOTO_PREFIX}${style_guide.trim()}\n\n${image_prompt.trim()}`

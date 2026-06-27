@@ -37,6 +37,8 @@ ERA: [specific period and decade] | REGION: [geographic setting and landscape] |
 
 Lock COLOR_TEMP, TIME_OF_DAY, and LIGHT_DIR for the entire video. Every scene must share the same ambient light quality — this is what makes cuts feel like the same world.
 
+VIBRANCY RULE — the show's visual identity is always rich, saturated, and high-contrast regardless of weather, season, or narrative mood. Dark scenes use deep rich shadows, not desaturated grey. Snow scenes are crisp bright whites with vivid contrast. Fire scenes are vivid amber and orange, not dull smoggy grey. Overcast skies are dramatic silver, not flat. Never flat, never muted, never dull. If the palette risks looking grey or lifeless, push saturation and contrast until it feels cinematic.
+
 STEP 4 — SCENES:
 For each scene:
 - scene_number: sequential integer starting at 1
