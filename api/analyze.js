@@ -46,7 +46,20 @@ For each scene:
 - image_prompt: a focused shot description rooted in your research. The visual_style_guide will be prepended at generation time — do NOT repeat era or costume details. Describe: subject (use character shorthand from your style guide), camera angle/distance, specific action, lighting quality, composition. Open every prompt with "Photorealistic cinematic 35mm documentary footage —" to anchor the model in live-action realism before any historical detail is introduced.
 
   HUMAN FIGURE RULE — apply this test to every scene before writing the prompt:
-  Does the script_excerpt contain (a) a named individual, OR (b) an explicit human action verb (walked, built, fought, seized, carried, gathered, knelt, etc.)? If YES → you may include a human figure, seen from behind, three-quarter rear, or at significant distance — never facing camera, never a close-up face. If NO → no human figures. Default to architecture, landscape, objects, or nature. This rule is mandatory, not a guideline.
+  A human figure is allowed ONLY when the script_excerpt describes a specific individual or group performing a concrete, visible physical action (e.g. "his officials rode north", "a carpenter planed the beam", "soldiers raised the banner"). Generic historical statements ("the Shogunate seized control", "craftsmen were renowned", "the city survived") do NOT qualify — render those as architecture, landscape, or objects instead. Default is NO human figures. When a figure IS included: seen from behind or three-quarter rear, never facing camera, never a close-up face. This rule is mandatory, not a guideline.
+
+  SHOT DIVERSITY RULE — every video must contain all four of these shot types. Plan the full set before writing any scene:
+  1. WIDE ESTABLISHING — mountain landscape, aerial city view, full building exterior. Use for opening and location transitions.
+  2. MEDIUM — street-level scene, architectural detail, group at distance. Use for pacing and context.
+  3. EXTREME CLOSE-UP DETAIL — hands on a tool, a wax seal pressed into paper, wood grain under a blade, rope binding a beam. Plan at least 1–2 per video, especially at or near the climactic moment. These are the shots viewers remember.
+  4. DRAMATIC ACTION BEAT — the peak emotional moment of the script rendered visually (fire consuming a city, a solitary figure at a mountain pass, a craftsman mid-stroke). This scene must be cinematically distinct — unusual angle, dramatic lighting, or unexpected scale — not another crowd walking down a street.
+
+  NARRATIVE ARC RULE — before writing scenes, map the emotional arc of the script:
+  - SETUP: establish the world, place, and era (wide shots, landscape, architecture)
+  - TENSION: build toward the central conflict or turning point (tighter shots, darker mood)
+  - CLIMAX: the peak moment — make it visually singular. A fire. A document stamped with a seal. A blade catching light. NOT another street scene.
+  - RESOLUTION: aftermath and legacy (returning to wide, quieter compositions)
+  Do not generate a video where every scene is the same type. Vary the rhythm: wide → medium → close-up → dramatic action → wide. A sequence of ten crowd-walking-down-a-street shots is a failure of direction.
 
   VISUAL CONTINUITY RULE — for consecutive scenes set in the same physical location, anchor the new shot to a specific element from the previous scene: name a shared architectural feature, landmark, or natural object that appears in both (e.g. "the same moss-covered stone gate seen in the previous scene, now framed from below looking up"). This creates the feeling of a continuous camera moving through one world rather than cutting between unrelated images.
 

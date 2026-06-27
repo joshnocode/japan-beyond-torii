@@ -6,17 +6,17 @@ import { useAuth } from '../hooks/useAuth'
 const API_BASE = import.meta.env.DEV ? 'http://localhost:3000' : ''
 
 // 65 words exactly → Math.round(65 / 130 * 60) = 30s
-const TAKAYAMA_30SEC = `In 1692, the Tokugawa Shogunate seized Takayama — deep in the Japanese Alps.
+const TAKAYAMA_30SEC = `Edo burned.
 
-Not through war. Through paperwork.
+In 1657, the Great Meireki Fire consumed the capital. Half the city gone. The Shogun needed timber — millions of logs.
 
-A single decree dissolved a local dynasty and made this mountain city the property of the Shogun.
+His officials rode north into the Japanese Alps. And found it.
 
-He wanted its timber. Its legendary Hida carpenters. Its wealth.
+Takayama. Home to the legendary Hida carpenters — the finest craftsmen in Japan.
 
-What he couldn't predict — that in seizing Takayama, he would preserve it.
+In 1692, a single decree seized it all.
 
-The city he took became the city that survived.`
+The city that fed his ambition became the city that outlasted it.`
 
 const TAKAYAMA_1MIN = `In 1692, the Tokugawa Shogunate did something it almost never did.
 
