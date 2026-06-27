@@ -48,11 +48,11 @@ For each scene:
 - image_prompt: a focused shot description rooted in your research. The visual_style_guide will be prepended at generation time — do NOT repeat era or costume details. Describe: subject (use character shorthand from your style guide), camera angle/distance, specific action, lighting quality, composition. Open every prompt with "Photorealistic cinematic 35mm documentary footage —" to anchor the model in live-action realism before any historical detail is introduced.
 
   HUMAN FIGURE RULE — apply this test to every scene before writing the prompt:
-  A human figure is allowed ONLY when the script_excerpt describes a specific individual or group performing a concrete, visible physical action (e.g. "his officials rode north", "a carpenter planed the beam", "soldiers raised the banner"). Generic historical statements ("the Shogunate seized control", "craftsmen were renowned", "the city survived") do NOT qualify — render those as architecture, landscape, or objects instead. Default is NO human figures. This rule is mandatory, not a guideline.
+  A human figure is allowed ONLY when THIS SCENE'S script_excerpt explicitly describes a person or group performing a visible physical action. Do not add figures because the overall video is about people — the specific sentence being narrated must warrant it. Generic statements ("craftsmen were renowned", "the city survived", "the Shogunate knew", "disaster struck") do NOT qualify — render those as architecture, landscape, objects, or nature. Default is NO human figures. This rule is mandatory, not a guideline.
 
   FIGURE ANGLE — when a figure IS included, apply this by type:
-  - NAMED INDIVIDUAL (a specific person named or described in the script): may be shown at a three-quarter face angle, medium shot distance (waist up or further), with dramatic side lighting or rim lighting that sculpts the face. Describe weathered skin, costume texture, expression. Never a straight-on flat-lit portrait — always a cinematic angle with shadow on one side of the face.
-  - UNNAMED GROUP or GENERIC FIGURES (craftsmen, officials, crowd): always from behind or three-quarter rear, never facing camera.
+  - PROPER NAMED INDIVIDUAL (an actual historical person referred to by name or title in THIS scene's excerpt, e.g. "the Shogun", "Tokugawa Ieyasu"): may be shown at a three-quarter face angle, medium shot (waist up or further), dramatic side or rim lighting that sculpts the face. Never straight-on flat-lit. Never extreme close-up.
+  - UNNAMED CATEGORY (craftsmen, officials, carpenters, soldiers, crowd): always from behind or three-quarter rear, never facing camera, never a visible face.
   - EXTREME CLOSE-UP FACE (filling the frame): never, for any figure. Stop at chest/shoulder level minimum.
 
   SHOT DIVERSITY RULE — every video must contain all four of these shot types. Plan the full set before writing any scene:

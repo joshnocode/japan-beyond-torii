@@ -95,12 +95,15 @@ shots with no arc is a failure of direction.
 **Do not remove SHOT DIVERSITY RULE or NARRATIVE ARC RULE.**
 
 ### 8. Character Face Rule (Director prompt — `api/analyze.js`)
-Named individuals may be shown at three-quarter face angle, medium distance,
-with dramatic side or rim lighting. Unnamed crowds always from behind. Extreme
-close-up faces (filling the frame) never — this is the uncanny valley danger
-zone. The rule allows character detail and demeanor without triggering bad AI
-face generation.
-**Do not allow straight-on flat-lit portraits or extreme face close-ups.**
+Faces are only allowed for PROPER NAMED INDIVIDUALS (actual historical persons
+referred to by name or title in that specific scene's excerpt — e.g. "the Shogun",
+"Tokugawa Ieyasu"). Unnamed categories (craftsmen, carpenters, officials, crowds)
+always from behind, never facing camera. Extreme close-up faces never — uncanny
+valley danger zone. The figure test must apply to the specific scene's excerpt,
+not the overall video subject — a video about carpenters does not put a carpenter
+face in every scene.
+**Do not allow category labels ("Hida carpenters") to qualify as named individuals.
+Do not allow straight-on flat-lit portraits or extreme face close-ups.**
 
 ---
 
