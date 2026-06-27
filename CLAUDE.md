@@ -40,22 +40,28 @@ confirmed "THE CLEANEST EDITION YET." They must be preserved. If a future
 request would weaken or remove either of them, push back hard and explain the
 tradeoff before making any change.
 
-### 4. Photorealism Anchor (Director prompt — `api/analyze.js`, `api/generate-image.js`)
-Every image_prompt in STEP 4 must open with:
+### 4. Photorealism Anchor (`api/generate-image.js`, Director prompt — `api/analyze.js`)
+`generate-image.js` prepends a hardcoded `PHOTO_PREFIX` to the very start of
+`fullPrompt` — before even the `style_guide` — so Flux sees the medium signal
+before any historical vocabulary:
+`"Photorealistic cinematic 35mm documentary footage set in pre-modern historical
+Japan, rich saturated colors, high contrast cinematic lighting, vivid and vibrant,
+crisp historical textures, zero contemporary or modern elements, zero illustration
+or anime — "`
+
+This prevents two failure modes: (1) illustration drift when period vocabulary
+(Edo, merchant district) appears before the photorealism signal, and (2) Flux
+anchoring to modern contemporary Japan rather than historical settings.
+
+Every image_prompt in STEP 4 must also open with:
 `"Photorealistic cinematic 35mm documentary footage —"`
-This frontloads the medium signal before any historical vocabulary, preventing
-Flux from drifting toward ukiyo-e/woodblock/illustration style when it
-encounters period-specific terms like "merchant district" or "Hida carpenter."
 
-The negative_prompt in `api/generate-image.js` must include illustration-style
-tokens: `ukiyo-e, woodblock print, woodblock, sumi-e, ink wash, Japanese
-illustration, ukiyo, woodcut, manga, anime, illustration, cartoon, painting,
-watercolor, ink, sketch, cel-shaded, drawing, comic book, digital art, stylized,
-flat, 2D, art print, decorative art, museum print`.
+The negative_prompt must include illustration tokens (ukiyo-e, woodblock, sumi-e,
+etc.) AND modern anachronism tokens (taxi, cab, automobile, modern road, parking
+lot, contemporary building, telephone pole, vending machine).
 
-**Do not remove the "Photorealistic cinematic 35mm documentary footage —" opener
-from the STEP 4 instructions. Do not remove illustration tokens from the
-negative_prompt.**
+**Do not move PHOTO_PREFIX after the style_guide. Do not remove illustration or
+anachronism tokens from the negative_prompt.**
 
 ### 5. Motion Artifact Prevention (Director prompt — `api/analyze.js`)
 The MOTION CONSTRAINT in STEP 4 requires `motion_prompt` values to prefer moves
@@ -66,6 +72,33 @@ roof tiles, lattice screens, carved wood — causes spatial warping in Seedance
 
 **Do not remove the MOTION CONSTRAINT or soften it to a preference. It must
 remain a hard constraint on motion_prompt generation.**
+
+### 6. Vibrancy Rule (Director prompt — `api/analyze.js`)
+The VIBRANCY RULE in STEP 3 mandates rich, saturated, high-contrast imagery
+regardless of weather, season, or narrative mood. Dark scenes use deep rich
+shadows, not desaturated grey. Snow scenes are crisp bright whites with vivid
+contrast. Fire scenes are vivid amber/orange, not dull smoggy grey. This was
+validated after the "Edo burned" script produced flat grey imagery.
+**Do not remove the VIBRANCY RULE or allow the Director to choose muted,
+desaturated, or flat palettes.**
+
+### 7. Shot Diversity + Narrative Arc (Director prompt — `api/analyze.js`)
+SHOT DIVERSITY RULE requires every video to contain all four shot types: wide
+establishing, medium, extreme close-up detail, and dramatic action beat. The
+extreme close-up detail shots (hands on tools, wax seals, wood grain) are what
+viewers remember — plan at least 1–2 per video at or near the climax.
+NARRATIVE ARC RULE requires the Director to map setup → tension → climax →
+resolution before writing scenes. A sequence of crowd-walking-down-a-street
+shots with no arc is a failure of direction.
+**Do not remove SHOT DIVERSITY RULE or NARRATIVE ARC RULE.**
+
+### 8. Character Face Rule (Director prompt — `api/analyze.js`)
+Named individuals may be shown at three-quarter face angle, medium distance,
+with dramatic side or rim lighting. Unnamed crowds always from behind. Extreme
+close-up faces (filling the frame) never — this is the uncanny valley danger
+zone. The rule allows character detail and demeanor without triggering bad AI
+face generation.
+**Do not allow straight-on flat-lit portraits or extreme face close-ups.**
 
 ---
 
