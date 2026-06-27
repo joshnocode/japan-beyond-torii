@@ -20,14 +20,16 @@ natural element in the image_prompt. This creates the feeling of a camera
 moving through one world rather than cutting between unrelated images.
 **Do not soften this to a guideline — it must remain a mandatory rule.**
 
-### 3. Img2img Reference Chaining (`api/generate-image.js`, `src/pages/ProjectPage.jsx`)
-Scene 1's generated image is passed as `image_prompt` at strength `0.12` to
-every subsequent Flux Pro Ultra call. This bleeds scene 1's color temperature
-and atmospheric mood into all downstream generations without constraining
-composition. The strength is intentionally low (0.12) — do not raise it above
-~0.20 or compositions become too similar.
-**Do not remove `reference_image_url` from the generate-image API or the
-generation loop in ProjectPage.**
+### 3. Visual Consistency via Locked Style Guide (Director prompt — `api/analyze.js`)
+Visual consistency across scenes is achieved through the locked style guide
+(COLOR_TEMP, TIME_OF_DAY, LIGHT_DIR) in STEP 3 — not img2img reference chaining.
+Reference chaining was removed because it caused multi-location scripts to
+generate wrong scenes: scene 1's visual memory overrode dramatically different
+prompts (e.g. a snowy mountain street bleeding into an Edo fire scene).
+The style guide is the architecturally correct tool for consistency — it works
+across any script regardless of how many locations are involved.
+**Do not re-introduce img2img reference chaining. If consistency feels weak,
+strengthen the style guide instructions, not the pixel-level reference.**
 
 ---
 
