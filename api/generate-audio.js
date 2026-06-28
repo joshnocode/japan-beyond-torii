@@ -84,6 +84,7 @@ export default async function handler(req, res) {
       }
 
       const data = await r.json()
+      if (!data.audio_base64) throw new Error('ElevenLabs response missing audio_base64')
       buffers.push(Buffer.from(data.audio_base64, 'base64'))
 
       // Merge this chunk's alignment into the master list, shifted by timeOffset
@@ -96,6 +97,12 @@ export default async function handler(req, res) {
         }
         // Advance offset by this chunk's actual spoken duration
         timeOffset += character_end_times_seconds.at(-1) || 0
+      } else {
+        // Missing alignment for this chunk — subsequent chunks would get wrong timestamps.
+        // Clear accumulated data so we don't upload a broken partial alignment.
+        allChars.length = 0
+        allStarts.length = 0
+        allEnds.length = 0
       }
     }
 

@@ -31,7 +31,7 @@ function toAssTime(sec) {
   const h = Math.floor(sec / 3600)
   const m = Math.floor((sec % 3600) / 60)
   const s = Math.floor(sec % 60)
-  const cs = Math.round((sec % 1) * 100)
+  const cs = Math.min(99, Math.round((sec % 1) * 100))
   return `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}.${String(cs).padStart(2, '0')}`
 }
 
@@ -195,7 +195,7 @@ export default async function handler(req, res) {
       .getPublicUrl(`${project.user_id}/${project_id}/alignment.json`)
     const alignmentPromise = fetch(alignUrlData.publicUrl)
       .then(r => r.ok ? r.json() : null)
-      .catch(() => null)
+      .catch(err => { log.push(`[${ts()}] ⚠ alignment fetch failed: ${err.message}`); return null })
 
     // Generate SFX + download alignment in parallel with clip + narration downloads
     log.push(`[${ts()}] downloading ${scenesForAssembly.length} clips + audio${sfxApiKey ? ' + SFX' : ''}`)
@@ -318,7 +318,7 @@ export default async function handler(req, res) {
           // Silent stereo placeholder keeps timeline sync for scenes without SFX
           await run(ffmpeg, ['-loglevel', 'error',
             '-f', 'lavfi', '-i', `aevalsrc=0:c=stereo:s=44100:d=${clipDur.toFixed(3)}`,
-            '-c:a', 'aac', '-b:a', '128k',
+            '-c:a', 'aac', '-b:a', '128k', '-ar', '44100', '-ac', '2',
             '-y', segPath])
         }
         sfxSegPaths.push(segPath)
@@ -380,7 +380,7 @@ export default async function handler(req, res) {
           execFile(ffmpeg, ['-i', mergedPath], { maxBuffer: 10 * 1024 * 1024 },
             (_e, _o, stderr) => resolve(stderr || ''))
         )
-        const dimMatch = probeOut.match(/(\d{2,4})x(\d{2,4})/)
+        const dimMatch = probeOut.match(/Video:.*?(\d{2,4})x(\d{2,4})/)
         const vW = dimMatch ? parseInt(dimMatch[1]) : 720
         const vH = dimMatch ? parseInt(dimMatch[2]) : 406
 
