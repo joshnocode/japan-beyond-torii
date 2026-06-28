@@ -23,8 +23,8 @@ export default async function handler(req, res) {
         input: {
           image_url,
           prompt: motion_prompt || 'slow cinematic camera movement',
-          duration: 5,
-          resolution: '720p',
+          duration: 10,
+          resolution: '1080p',
           aspect_ratio: '9:16',
           generate_audio: false,
         },

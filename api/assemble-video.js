@@ -5,9 +5,9 @@ import { writeFile, readFile, mkdir, rm, chmod, copyFile, unlink } from 'node:fs
 import { tmpdir } from 'node:os'
 import ffmpegStaticPath from 'ffmpeg-static'
 
-const DISSOLVE_DUR = 0.3
+const DISSOLVE_DUR = 0.5
 const GRADE_FILTER = 'eq=contrast=1.05:saturation=1.03,noise=alls=4:allf=t+u'
-const SFX_VOLUME = 0.2  // ambient SFX at 20% — Alfred narration clearly primary
+const SFX_VOLUME = 0.35  // ambient SFX at 35% — Alfred narration clearly primary
 
 export const maxDuration = 300
 
@@ -275,9 +275,9 @@ export default async function handler(req, res) {
 
       const clipDur = getClipDur(scene_index)
       const args = ['-loglevel', 'error', '-stream_loop', '-1', '-i', origPath,
-        '-vf', `scale=720:-2,${GRADE_FILTER}`,
-        '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '34',
-        '-maxrate', '1400k', '-bufsize', '2800k', '-an',
+        '-vf', `scale=1080:-2,${GRADE_FILTER}`,
+        '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '28',
+        '-maxrate', '3000k', '-bufsize', '6000k', '-an',
         '-t', clipDur.toFixed(3),
         '-y', scaledPath]
 
@@ -356,15 +356,15 @@ export default async function handler(req, res) {
         cumulativeOffset += prevDur - DISSOLVE_DUR
         const inp = i === 1 ? '[0:v][1:v]' : `[xv${i - 1}][${i}:v]`
         const out = i === scaledPaths.length - 1 ? '[vout]' : `[xv${i}]`
-        filterParts.push(`${inp}xfade=transition=dissolve:duration=${DISSOLVE_DUR}:offset=${cumulativeOffset.toFixed(3)}${out}`)
+        filterParts.push(`${inp}xfade=transition=fadeblack:duration=${DISSOLVE_DUR}:offset=${cumulativeOffset.toFixed(3)}${out}`)
       }
 
       const xfadeArgs = ['-loglevel', 'error',
         ...inputArgs,
         '-filter_complex', filterParts.join(';'),
         '-map', '[vout]',
-        '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '34',
-        '-maxrate', '1400k', '-bufsize', '2800k',
+        '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '28',
+        '-maxrate', '3000k', '-bufsize', '6000k',
         '-an', '-y', mergedPath]
       log.push(`[${ts()}] running xfade filtergraph (${scaledPaths.length} clips, ${DISSOLVE_DUR}s dissolves)`)
       await run(ffmpeg, xfadeArgs)
@@ -381,8 +381,8 @@ export default async function handler(req, res) {
             (_e, _o, stderr) => resolve(stderr || ''))
         )
         const dimMatch = probeOut.match(/Video:.*?(\d{2,4})x(\d{2,4})/)
-        const vW = dimMatch ? parseInt(dimMatch[1]) : 720
-        const vH = dimMatch ? parseInt(dimMatch[2]) : 406
+        const vW = dimMatch ? parseInt(dimMatch[1]) : 1080
+        const vH = dimMatch ? parseInt(dimMatch[2]) : 1920
 
         const assContent = buildAss(
           alignment.characters,
@@ -397,8 +397,8 @@ export default async function handler(req, res) {
           await run(ffmpeg, ['-loglevel', 'error',
             '-i', mergedPath,
             '-vf', `subtitles=${assPath}`,
-            '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '34',
-            '-maxrate', '1400k', '-bufsize', '2800k',
+            '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '28',
+            '-maxrate', '3000k', '-bufsize', '6000k',
             '-an', '-y', mergedSubPath])
           videoForMux = mergedSubPath
           log.push(`[${ts()}] subtitles burned in (${alignment.characters.length} chars → ${vW}×${vH})`)
@@ -414,7 +414,7 @@ export default async function handler(req, res) {
       const muxArgs = ['-loglevel', 'error',
         '-i', videoForMux, '-i', audioPath, '-i', ambientPath,
         '-filter_complex',
-          `[1:a]volume=1.0[nar];[2:a]volume=${SFX_VOLUME}[sfx];[nar][sfx]amix=inputs=2:duration=first:dropout_transition=0[mixed];[mixed]alimiter=level_in=1:level_out=0.95:limit=0.95[out]`,
+          `[1:a]volume=1.0[nar];[2:a]volume=${SFX_VOLUME}[sfx];[nar][sfx]amix=inputs=2:duration=first:dropout_transition=0:normalize=0[mixed];[mixed]alimiter=level_in=1:level_out=0.95:limit=0.95[out]`,
         '-map', '0:v:0', '-map', '[out]',
         '-c:v', 'copy', '-c:a', 'aac', '-b:a', '128k',
         '-shortest', '-y', outputPath]

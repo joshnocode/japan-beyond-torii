@@ -21,11 +21,12 @@ STEP 1 — HISTORICAL RESEARCH (write your answers in the "research_notes" field
 Be specific but concise — 2-3 focused sentences per question is sufficient. Focus only on facts directly relevant to image generation and anachronism avoidance. Do not write essays. Every image prompt you generate must be rooted in these facts. Do not invent — reason from what you know about the period.
 
 STEP 2 — PACING (assign duration_sec to each scene):
-- 3–6s: Sharp cuts — a single dramatic word or phrase, a reveal, a punctuation beat
-- 8–15s: Standard shots — a sentence or two of narration, transitions, quick establishing
-- 18–30s: Breathing room — a paragraph of context, a beautiful landscape, an emotional moment
-- 35–60s: Lingering holds — a powerful opening or closing image, a key architectural reveal, contemplative silence over scenery
+- 8–12s: Short beats — a single dramatic line, a reveal, a punctuation moment
+- 13–20s: Standard shots — a sentence or two of narration, transitions, quick establishing
+- 21–35s: Breathing room — a paragraph of context, a beautiful landscape, an emotional moment
+- 36–60s: Lingering holds — a powerful opening or closing image, a key architectural reveal, contemplative silence over scenery
 
+MINIMUM: no scene may be shorter than 8 seconds. This is a hard floor — never assign duration_sec below 8.
 Think like Scorsese: vary the rhythm. Don't give every scene the same duration.
 
 CONSTRAINT: scene durations must sum to approximately estimated_duration_seconds (provided). You have creative freedom within ±10%.
@@ -250,9 +251,9 @@ function parseResponse(text, serverDurSec) {
     obj.scenes = obj.scenes.map((s, i) => {
       let dur
       if (i === obj.scenes.length - 1) {
-        dur = Math.max(3, Math.round(totalDurSec) - assigned)
+        dur = Math.max(8, Math.round(totalDurSec) - assigned)
       } else {
-        dur = Math.max(3, Math.round((wordCounts[i] / totalWords) * totalDurSec))
+        dur = Math.max(8, Math.round((wordCounts[i] / totalWords) * totalDurSec))
         assigned += dur
       }
       return { ...s, duration_sec: dur }
