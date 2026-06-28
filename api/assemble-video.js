@@ -26,6 +26,74 @@ function run(ffmpeg, args) {
   })
 }
 
+// Convert seconds to ASS timestamp format H:MM:SS.cc
+function toAssTime(sec) {
+  const h = Math.floor(sec / 3600)
+  const m = Math.floor((sec % 3600) / 60)
+  const s = Math.floor(sec % 60)
+  const cs = Math.round((sec % 1) * 100)
+  return `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}.${String(cs).padStart(2, '0')}`
+}
+
+// Build an ASS subtitle file from ElevenLabs character-level alignment.
+// Groups characters into words, then words into lines of wordsPerLine.
+function buildAss(characters, starts, ends, wordsPerLine = 4, playResX = 720, playResY = 406) {
+  // Build word list from character alignment
+  const words = []
+  let wordChars = ''
+  let wordStart = null
+  let wordEnd = null
+
+  for (let i = 0; i < characters.length; i++) {
+    const ch = characters[i]
+    if (ch === ' ' || ch === '\n' || ch === '\r') {
+      if (wordChars.trim()) {
+        words.push({ text: wordChars.trim(), start: wordStart, end: wordEnd })
+        wordChars = ''
+        wordStart = null
+        wordEnd = null
+      }
+    } else {
+      if (wordStart === null) wordStart = starts[i]
+      wordEnd = ends[i]
+      wordChars += ch
+    }
+  }
+  if (wordChars.trim()) words.push({ text: wordChars.trim(), start: wordStart, end: wordEnd })
+
+  if (!words.length) return null
+
+  // Group words into subtitle lines
+  const lines = []
+  for (let i = 0; i < words.length; i += wordsPerLine) {
+    const group = words.slice(i, i + wordsPerLine)
+    lines.push({
+      text: group.map(w => w.text).join(' '),
+      start: group[0].start,
+      end: group[group.length - 1].end,
+    })
+  }
+
+  // ASS file — white bold text, black outline, bottom-center, no shadow
+  const header = `[Script Info]
+ScriptType: v4.00+
+PlayResX: ${playResX}
+PlayResY: ${playResY}
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+Style: Default,Arial,44,&H00FFFFFF,&H000000FF,&H00000000,&H00000000,-1,0,0,0,100,100,0,0,1,2.5,0,2,24,24,52,1
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text`
+
+  const dialogues = lines
+    .map(l => `Dialogue: 0,${toAssTime(l.start)},${toAssTime(l.end)},Default,,0,0,0,,${l.text}`)
+    .join('\n')
+
+  return header + '\n' + dialogues + '\n'
+}
+
 async function generateSfx(apiKey, prompt, durationSec) {
   const resp = await fetch('https://api.elevenlabs.io/v1/sound-generation', {
     method: 'POST',
@@ -121,7 +189,15 @@ export default async function handler(req, res) {
     const sfxPromptMap = new Map(briefScenes.map(s => [s.scene_number - 1, s.sound_effect_prompt]))
     const sfxApiKey = process.env.ELEVENLABS_API_KEY || process.env.VITE_ELEVENLABS_API_KEY
 
-    // Generate SFX in parallel with clip + narration downloads
+    // Fetch alignment JSON (stored by generate-audio when /with-timestamps was used)
+    const { data: alignUrlData } = supabase.storage
+      .from('project-assets')
+      .getPublicUrl(`${project.user_id}/${project_id}/alignment.json`)
+    const alignmentPromise = fetch(alignUrlData.publicUrl)
+      .then(r => r.ok ? r.json() : null)
+      .catch(() => null)
+
+    // Generate SFX + download alignment in parallel with clip + narration downloads
     log.push(`[${ts()}] downloading ${scenesForAssembly.length} clips + audio${sfxApiKey ? ' + SFX' : ''}`)
 
     const sfxPromise = sfxApiKey
@@ -139,7 +215,7 @@ export default async function handler(req, res) {
         }))
       : Promise.resolve(null)
 
-    const [clips, audioBuf, sfxResults] = await Promise.all([
+    const [clips, audioBuf, sfxResults, alignment] = await Promise.all([
       Promise.all(scenesForAssembly.map(async (s) => {
         const resp = await fetch(s.video_url)
         if (!resp.ok) throw new Error(`Scene ${s.scene_index + 1} download failed (HTTP ${resp.status})`)
@@ -153,8 +229,9 @@ export default async function handler(req, res) {
           })
         : Promise.resolve(null),
       sfxPromise,
+      alignmentPromise,
     ])
-    log.push(`[${ts()}] downloads complete`)
+    log.push(`[${ts()}] downloads complete${alignment ? ' (alignment captured)' : ''}`)
 
     // Write narration and probe duration
     let audioPath = null
@@ -294,11 +371,48 @@ export default async function handler(req, res) {
       log.push(`[${ts()}] xfade done`)
     }
 
+    // Burn subtitles into video if alignment data is available (non-fatal)
+    // Probe merged.mp4 dimensions so ASS PlayRes matches actual video size
+    let videoForMux = mergedPath
+    if (alignment?.characters?.length) {
+      try {
+        const probeOut = await new Promise(resolve =>
+          execFile(ffmpeg, ['-i', mergedPath], { maxBuffer: 10 * 1024 * 1024 },
+            (_e, _o, stderr) => resolve(stderr || ''))
+        )
+        const dimMatch = probeOut.match(/(\d{2,4})x(\d{2,4})/)
+        const vW = dimMatch ? parseInt(dimMatch[1]) : 720
+        const vH = dimMatch ? parseInt(dimMatch[2]) : 406
+
+        const assContent = buildAss(
+          alignment.characters,
+          alignment.character_start_times_seconds,
+          alignment.character_end_times_seconds,
+          4, vW, vH
+        )
+        if (assContent) {
+          const assPath = join(jobDir, 'subs.ass')
+          await writeFile(assPath, assContent)
+          const mergedSubPath = join(jobDir, 'merged_sub.mp4')
+          await run(ffmpeg, ['-loglevel', 'error',
+            '-i', mergedPath,
+            '-vf', `subtitles=${assPath}`,
+            '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '34',
+            '-maxrate', '1400k', '-bufsize', '2800k',
+            '-an', '-y', mergedSubPath])
+          videoForMux = mergedSubPath
+          log.push(`[${ts()}] subtitles burned in (${alignment.characters.length} chars → ${vW}×${vH})`)
+        }
+      } catch (err) {
+        log.push(`[${ts()}] ⚠ subtitle burn failed: ${err.message.slice(0, 200)} — continuing without`)
+      }
+    }
+
     // Mux audio — narration primary, ambient SFX in background
     if (audioPath && ambientPath) {
       // Mix: narration vol=1.0, SFX vol=0.2 — Alfred clearly primary
       const muxArgs = ['-loglevel', 'error',
-        '-i', mergedPath, '-i', audioPath, '-i', ambientPath,
+        '-i', videoForMux, '-i', audioPath, '-i', ambientPath,
         '-filter_complex',
           `[1:a]volume=1.0[nar];[2:a]volume=${SFX_VOLUME}[sfx];[nar][sfx]amix=inputs=2:duration=first:dropout_transition=0[mixed];[mixed]alimiter=level_in=1:level_out=0.95:limit=0.95[out]`,
         '-map', '0:v:0', '-map', '[out]',
@@ -309,7 +423,7 @@ export default async function handler(req, res) {
       log.push(`[${ts()}] mux done`)
     } else if (audioPath) {
       const muxArgs = ['-loglevel', 'error',
-        '-i', mergedPath, '-i', audioPath,
+        '-i', videoForMux, '-i', audioPath,
         '-map', '0:v:0', '-map', '1:a:0',
         '-c:v', 'copy', '-c:a', 'aac', '-b:a', '128k',
         '-shortest', '-y', outputPath]
@@ -319,7 +433,7 @@ export default async function handler(req, res) {
     } else if (ambientPath) {
       // No narration — play SFX at 60% so it's not too quiet as the sole audio
       const muxArgs = ['-loglevel', 'error',
-        '-i', mergedPath, '-i', ambientPath,
+        '-i', videoForMux, '-i', ambientPath,
         '-filter_complex', `[1:a]volume=0.6[sfx];[sfx]alimiter=level_in=1:level_out=0.95:limit=0.95[out]`,
         '-map', '0:v:0', '-map', '[out]',
         '-c:v', 'copy', '-c:a', 'aac', '-b:a', '128k',
@@ -328,7 +442,7 @@ export default async function handler(req, res) {
       await run(ffmpeg, muxArgs)
       log.push(`[${ts()}] mux done`)
     } else {
-      await copyFile(mergedPath, outputPath)
+      await copyFile(videoForMux, outputPath)
       log.push(`[${ts()}] no audio, using merged video as output`)
     }
 
