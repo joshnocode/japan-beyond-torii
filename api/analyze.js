@@ -50,6 +50,8 @@ For each scene:
   HUMAN FIGURE RULE — apply this test to every scene before writing the prompt:
   A human figure is allowed ONLY when THIS SCENE'S script_excerpt explicitly describes a person or group performing a visible physical action. Do not add figures because the overall video is about people — the specific sentence being narrated must warrant it. Generic statements ("craftsmen were renowned", "the city survived", "the Shogunate knew", "disaster struck") do NOT qualify — render those as architecture, landscape, objects, or nature. Default is NO human figures. This rule is mandatory, not a guideline.
 
+  When the human figure rule says NO figures, you MUST end the image_prompt with the phrase: "no human figures, no people, empty scene." This is required — Flux will add people by default if not explicitly told otherwise.
+
   FIGURE ANGLE — when a figure IS included, apply this by type:
   - PROPER NAMED INDIVIDUAL (an actual historical person referred to by name or title in THIS scene's excerpt, e.g. "the Shogun", "Tokugawa Ieyasu"): may be shown at a three-quarter face angle, medium shot (waist up or further), dramatic side or rim lighting that sculpts the face. Never straight-on flat-lit. Never extreme close-up.
   - UNNAMED CATEGORY (craftsmen, officials, carpenters, soldiers, crowd): always from behind or three-quarter rear, never facing camera, never a visible face.
