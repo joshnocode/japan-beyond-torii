@@ -18,7 +18,7 @@ STEP 1 — HISTORICAL RESEARCH (write your answers in the "research_notes" field
 
 5. ANACHRONISM GUARD: What does NOT exist yet in this era? List specific things that must never appear because they hadn't been invented or adopted yet.
 
-Write thorough, specific answers. Every image prompt you generate must be rooted in these facts. Do not invent — reason from what you know about the period.
+Be specific but concise — 2-3 focused sentences per question is sufficient. Focus only on facts directly relevant to image generation and anachronism avoidance. Do not write essays. Every image prompt you generate must be rooted in these facts. Do not invent — reason from what you know about the period.
 
 STEP 2 — PACING (assign duration_sec to each scene):
 - 3–6s: Sharp cuts — a single dramatic word or phrase, a reveal, a punctuation beat
@@ -335,10 +335,21 @@ function buildHistorianReference(entities) {
   return `HISTORIAN ENTITY REFERENCE — authoritative visual descriptions for image prompts:\n${lines.join('\n')}`
 }
 
+// Reject if the wrapped promise takes longer than ms — lets Historian/Inspector
+// yield gracefully without eating into the Director's time budget.
+function withTimeout(promise, ms, label) {
+  return Promise.race([
+    promise,
+    new Promise((_, reject) =>
+      setTimeout(() => reject(new Error(`${label} timed out after ${Math.round(ms / 1000)}s`)), ms)
+    ),
+  ])
+}
+
 async function runHistorian(client, script) {
   const stream = client.messages.stream({
-    model: 'claude-sonnet-4-6',
-    max_tokens: 8000,
+    model: 'claude-haiku-4-5-20251001',
+    max_tokens: 4000,
     system: HISTORIAN_SYSTEM_PROMPT,
     messages: [{ role: 'user', content: `Extract all historical entities from this narration script:\n\n${script.trim()}` }],
   })
@@ -357,8 +368,8 @@ async function runInspector(client, scenes, historianReference) {
     sceneBlock,
   ].join('')
   const stream = client.messages.stream({
-    model: 'claude-sonnet-4-6',
-    max_tokens: 16000,
+    model: 'claude-haiku-4-5-20251001',
+    max_tokens: 8000,
     system: INSPECTOR_SYSTEM_PROMPT,
     messages: [{ role: 'user', content: userContent }],
   })
@@ -393,8 +404,8 @@ Return ONLY valid JSON with no markdown fences: {"revised_scenes": [{"scene_numb
   ].join('')
 
   const stream = client.messages.stream({
-    model: 'claude-sonnet-4-6',
-    max_tokens: 8000,
+    model: 'claude-haiku-4-5-20251001',
+    max_tokens: 6000,
     system: revisionSystem,
     messages: [{ role: 'user', content: userContent }],
   })
@@ -444,7 +455,7 @@ export default async function handler(req, res) {
     let historianEntities = []
     let historianReference = ''
     try {
-      const historianResult = await runHistorian(client, script)
+      const historianResult = await withTimeout(runHistorian(client, script), 40000, 'Historian')
       historianEntities = historianResult?.entities ?? []
       historianReference = buildHistorianReference(historianEntities)
       send({ type: 'progress', message: `Historian catalogued ${historianEntities.length} entities — handing reference to Director…` })
@@ -455,6 +466,11 @@ export default async function handler(req, res) {
 
     // ── Phase 2: Director ─────────────────────────────────────────────────────
     send({ type: 'progress', message: `Director is reading the script and planning ${Math.round(estimatedDurSec / 60)}-minute edit…` })
+
+    // Scale token budget to the estimated number of scenes so short scripts
+    // don't generate 64K tokens worth of verbose research notes.
+    const estScenes = Math.min(MAX_SCENES, Math.ceil(estimatedDurSec / 8))
+    const directorMaxTokens = Math.min(64000, Math.max(16000, estScenes * 700 + 8000))
 
     const userMessage = [
       `Script metadata:`,
@@ -470,7 +486,7 @@ export default async function handler(req, res) {
 
     const directorStream = client.messages.stream({
       model: 'claude-sonnet-4-6',
-      max_tokens: 64000,
+      max_tokens: directorMaxTokens,
       system: SYSTEM_PROMPT,
       messages: [{ role: 'user', content: userMessage }],
     })
@@ -493,7 +509,7 @@ export default async function handler(req, res) {
     let inspectorPassed = inspectorTotal
     let inspectorFailed = 0
     try {
-      const inspectionResult = await runInspector(client, brief.scenes, historianReference)
+      const inspectionResult = await withTimeout(runInspector(client, brief.scenes, historianReference), 45000, 'Inspector')
       const results = inspectionResult?.results ?? []
       inspectorTotal = results.length
       inspectorPassed = results.filter(r => r.passed).length
@@ -506,7 +522,7 @@ export default async function handler(req, res) {
         const failedResults = results.filter(r => !r.passed)
         send({ type: 'progress', message: `Director is revising ${inspectorFailed} failed scene prompt${inspectorFailed !== 1 ? 's' : ''}…` })
         try {
-          const revisionResult = await reviseFailedScenes(client, failedResults, brief.scenes, historianReference)
+          const revisionResult = await withTimeout(reviseFailedScenes(client, failedResults, brief.scenes, historianReference), 30000, 'Revision')
           const revisedMap = new Map((revisionResult?.revised_scenes ?? []).map(r => [r.scene_number, r.image_prompt]))
           brief.scenes = brief.scenes.map(s =>
             revisedMap.has(s.scene_number) ? { ...s, image_prompt: revisedMap.get(s.scene_number) } : s
