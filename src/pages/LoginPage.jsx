@@ -65,7 +65,7 @@ export default function LoginPage() {
             {loading ? 'Signing in…' : 'Sign In'}
           </button>
         </form>
-        <p style={{ textAlign: 'center', marginTop: '20px', fontSize: '11px', color: 'rgba(255,255,255,0.35)', fontWeight: 400 }}>v28Jun-c</p>
+        <p style={{ textAlign: 'center', marginTop: '20px', fontSize: '11px', color: 'rgba(255,255,255,0.35)', fontWeight: 400 }}>v28Jun-d</p>
       </div>
     </div>
   )
