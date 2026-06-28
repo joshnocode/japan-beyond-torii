@@ -235,10 +235,24 @@ export default function NewProjectPage() {
 
       // Insert in chunks of 20 — Supabase silently truncates large single-batch
       // inserts at the server's max_rows setting with no error returned.
+      // Each chunk retries up to 3× with exponential backoff to handle transient
+      // iOS Safari network errors ("TypeError: Load failed").
       const CHUNK = 20
+      const insertChunkWithRetry = async (chunk, offset) => {
+        const delays = [1000, 2000, 4000]
+        for (let attempt = 0; attempt <= delays.length; attempt++) {
+          try {
+            const { error: scenesErr } = await supabase.from('scenes').insert(chunk)
+            if (scenesErr) throw new Error(scenesErr.message)
+            return
+          } catch (err) {
+            if (attempt === delays.length) throw new Error(`Scene insert failed (rows ${offset}–${offset + CHUNK}) after ${attempt + 1} attempts: ${err.message}`)
+            await new Promise(r => setTimeout(r, delays[attempt]))
+          }
+        }
+      }
       for (let i = 0; i < scenes.length; i += CHUNK) {
-        const { error: scenesErr } = await supabase.from('scenes').insert(scenes.slice(i, i + CHUNK))
-        if (scenesErr) throw new Error(`Scene insert failed (rows ${i}–${i + CHUNK}): ${scenesErr.message}`)
+        await insertChunkWithRetry(scenes.slice(i, i + CHUNK), i)
       }
 
       navigate(`/project/${project.id}`)
