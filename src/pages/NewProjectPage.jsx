@@ -247,15 +247,30 @@ export default function NewProjectPage() {
         status: 'pending',
       }))
 
-      // Insert in chunks of 20 — Supabase silently truncates large single-batch
-      // inserts at the server's max_rows setting with no error returned.
-      const CHUNK = 20
-      for (let i = 0; i < scenes.length; i += CHUNK) {
-        const offset = i
-        await withRetry(`Scene insert (rows ${offset}–${offset + CHUNK})`, async () => {
-          const { error: scenesErr } = await supabase.from('scenes').insert(scenes.slice(offset, offset + CHUNK))
-          if (scenesErr) throw new Error(scenesErr.message)
-        })
+      // Guard against double-insert: if a previous attempt succeeded but the
+      // network response dropped (iOS "Load failed"), retrying would insert
+      // duplicate rows. Check first — if scenes are already there, skip insert.
+      const { count: existingCount } = await supabase
+        .from('scenes')
+        .select('id', { count: 'exact', head: true })
+        .eq('project_id', project.id)
+
+      if ((existingCount || 0) < scenes.length) {
+        // Delete any partial rows from a previous failed attempt, then re-insert clean
+        if ((existingCount || 0) > 0) {
+          await supabase.from('scenes').delete().eq('project_id', project.id)
+        }
+
+        // Insert in chunks of 20 — Supabase silently truncates large single-batch
+        // inserts at the server's max_rows setting with no error returned.
+        const CHUNK = 20
+        for (let i = 0; i < scenes.length; i += CHUNK) {
+          const offset = i
+          await withRetry(`Scene insert (rows ${offset}–${offset + CHUNK})`, async () => {
+            const { error: scenesErr } = await supabase.from('scenes').insert(scenes.slice(offset, offset + CHUNK))
+            if (scenesErr) throw new Error(scenesErr.message)
+          })
+        }
       }
 
       navigate(`/project/${project.id}`)

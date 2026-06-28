@@ -67,10 +67,19 @@ export default async function handler(req, res) {
   // Replace scenes reference with deduplicated list
   const scenesForAssembly = dedupedScenes
 
-  // Also detect duplicate video_url values (different indices, same clip file)
-  const urlCount = new Map()
-  for (const s of scenesForAssembly) { if (s.video_url) urlCount.set(s.video_url, (urlCount.get(s.video_url) || 0) + 1) }
-  const sharedUrls = [...urlCount.entries()].filter(([, n]) => n > 1)
+  // Deduplicate by video_url — if two different scene_indexes ended up with the
+  // same FAL output (e.g. same image prompt → same generated clip), only keep the
+  // first occurrence. Without this, the same clip plays twice in the final video.
+  const seenUrls = new Set()
+  const urlDedupedScenes = dedupedScenes.filter(s => {
+    if (!s.video_url || !seenUrls.has(s.video_url)) {
+      if (s.video_url) seenUrls.add(s.video_url)
+      return true
+    }
+    return false
+  })
+  const urlDupCount = dedupedScenes.length - urlDedupedScenes.length
+  const scenesForAssembly = urlDedupedScenes
 
   const missing = scenesForAssembly.filter(s => !s.video_url)
   if (missing.length) return res.status(400).json({ error: `${missing.length} scenes are missing video` })
@@ -91,8 +100,8 @@ export default async function handler(req, res) {
     log.push(`[${ts()}] ffmpeg ready`)
 
     // Log dedup results
-    if (dupCount > 0) log.push(`[${ts()}] ⚠ deduped ${dupCount} duplicate rows before assembly`)
-    if (sharedUrls.length > 0) log.push(`[${ts()}] ⚠ ${sharedUrls.length} video URL(s) shared across scenes: ${sharedUrls.map(([u, n]) => `${n}×${u.split('/').pop()}`).join(', ')}`)
+    if (dupCount > 0) log.push(`[${ts()}] ⚠ deduped ${dupCount} duplicate scene_index rows before assembly`)
+    if (urlDupCount > 0) log.push(`[${ts()}] ⚠ removed ${urlDupCount} scenes with duplicate video_url (same clip would have played twice)`)
 
     // Download clips and audio in parallel
     log.push(`[${ts()}] downloading ${scenesForAssembly.length} clips + audio${dupCount > 0 ? ` (${dupCount} duplicates removed)` : ''}`)
