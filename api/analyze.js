@@ -76,6 +76,7 @@ For each scene:
 
   End every prompt with: "photorealistic 8K, historical documentary, cinematic lighting, shot on 35mm film"
 - motion_prompt: one physical camera move — slow dolly forward, aerial drone descent, low-angle tracking, sweeping crane reveal, parallax push, or steadicam walk. Always specify slow/very slow speed. MOTION CONSTRAINT: prefer moves that push toward or pull away from the subject (dolly in/out, drone ascent/descent, slow zoom). Avoid fast lateral tracking across fine geometric surfaces — roof tiles, lattice screens, carved wood — as this causes motion artifacts. Wide landscape pans are safe; tight architectural tracking is not. CAMERA VECTOR CHAIN — plan motion_prompt values as a sequence, not independently. Each shot's movement should complement the previous: if scene N ends dolly-in (pushing deeper into space), scene N+1 either continues the axis (dolly-in into new space, creating seamless spatial flow) or cuts clean to a vertical move (crane up, drone descent) for intentional rhythm. Never put two consecutive lateral pans in opposite directions — left-pan into right-pan creates visual whiplash. Map the full camera vector chain for the entire video before writing any individual motion_prompt.
+- sound_effect_prompt: ambient sound that accompanies this scene. 1–2 specific sound sources that match the visual action and location (e.g. "crackling fire consuming timber beams, distant screams and collapsing structures", "mountain wind through cedar forest, distant waterfall", "busy Edo market, merchant calls and crowd murmur, wooden cart wheels on stone", "chisel striking hardwood, rhythmic sawdust and mallet taps, carpenter workshop"). Match the energy and mood of the scene — quiet meditative scenes get gentle ambient wind or flowing water, not silence. Never leave blank. Always write something specific — "gentle mountain breeze" is better than "ambient sound".
 
 Return ONLY valid JSON — no markdown fences, no explanation.
 
@@ -93,7 +94,8 @@ Return ONLY valid JSON — no markdown fences, no explanation.
       "script_excerpt": "...",
       "description": "...",
       "image_prompt": "...",
-      "motion_prompt": "..."
+      "motion_prompt": "...",
+      "sound_effect_prompt": "..."
     }
   ],
   "cost_estimate": {

@@ -51,10 +51,17 @@ export default async function handler(req, res) {
   try {
     const chunks = chunkText(project.script)
     if (chunks.length > 20) return res.status(400).json({ error: `Script too long for audio generation (${chunks.length} chunks — max 20, ~90,000 characters)` })
+
     const buffers = []
+    // Accumulated character-level alignment across all chunks (offset-adjusted)
+    const allChars = []
+    const allStarts = []
+    const allEnds = []
+    let timeOffset = 0
 
     for (const chunk of chunks) {
-      const r = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${VOICE_ID}`, {
+      // /with-timestamps returns JSON { audio_base64, alignment } instead of raw audio bytes
+      const r = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${VOICE_ID}/with-timestamps`, {
         method: 'POST',
         headers: {
           'xi-api-key': apiKey,
@@ -76,21 +83,59 @@ export default async function handler(req, res) {
         throw new Error(errMsg)
       }
 
-      buffers.push(Buffer.from(await r.arrayBuffer()))
+      const data = await r.json()
+      if (!data.audio_base64) throw new Error('ElevenLabs response missing audio_base64')
+      buffers.push(Buffer.from(data.audio_base64, 'base64'))
+
+      // Merge this chunk's alignment into the master list, shifted by timeOffset
+      const { characters, character_start_times_seconds, character_end_times_seconds } = data.alignment || {}
+      if (characters?.length && character_start_times_seconds?.length) {
+        for (let i = 0; i < characters.length; i++) {
+          allChars.push(characters[i])
+          allStarts.push((character_start_times_seconds[i] || 0) + timeOffset)
+          allEnds.push((character_end_times_seconds[i] || 0) + timeOffset)
+        }
+        // Advance offset by this chunk's actual spoken duration
+        timeOffset += character_end_times_seconds.at(-1) || 0
+      } else {
+        // Missing alignment for this chunk — subsequent chunks would get wrong timestamps.
+        // Clear accumulated data so we don't upload a broken partial alignment.
+        allChars.length = 0
+        allStarts.length = 0
+        allEnds.length = 0
+      }
     }
 
     const combined = Buffer.concat(buffers)
 
-    const path = `${project.user_id}/${project_id}/audio.mp3`
+    // Upload audio
+    const audioPath = `${project.user_id}/${project_id}/audio.mp3`
     const { error: uploadErr } = await supabase.storage
       .from('project-assets')
-      .upload(path, combined, { contentType: 'audio/mpeg', upsert: true })
+      .upload(audioPath, combined, { contentType: 'audio/mpeg', upsert: true })
     if (uploadErr) throw new Error(`Upload failed: ${uploadErr.message}`)
 
-    const { data: urlData } = supabase.storage.from('project-assets').getPublicUrl(path)
+    const { data: urlData } = supabase.storage.from('project-assets').getPublicUrl(audioPath)
+
+    // Upload alignment JSON — used at assembly time for subtitle generation
+    let alignmentCaptured = false
+    if (allChars.length > 0) {
+      const alignment = {
+        characters: allChars,
+        character_start_times_seconds: allStarts,
+        character_end_times_seconds: allEnds,
+      }
+      const alignBuf = Buffer.from(JSON.stringify(alignment))
+      const alignPath = `${project.user_id}/${project_id}/alignment.json`
+      const { error: alignErr } = await supabase.storage
+        .from('project-assets')
+        .upload(alignPath, alignBuf, { contentType: 'application/json', upsert: true })
+      alignmentCaptured = !alignErr
+    }
+
     await supabase.from('projects').update({ audio_url: urlData.publicUrl }).eq('id', project_id)
 
-    return res.status(200).json({ audio_url: urlData.publicUrl })
+    return res.status(200).json({ audio_url: urlData.publicUrl, alignment_captured: alignmentCaptured })
   } catch (err) {
     return res.status(500).json({ error: err.message || 'Audio generation failed' })
   }
