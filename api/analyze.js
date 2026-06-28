@@ -68,6 +68,8 @@ For each scene:
   - RESOLUTION: aftermath and legacy (returning to wide, quieter compositions)
   Do not generate a video where every scene is the same type. Vary the rhythm: wide → medium → close-up → dramatic action → wide. A sequence of ten crowd-walking-down-a-street shots is a failure of direction.
 
+  DEPICT THE EVENT DIRECTLY — when the narration describes a dramatic event (fire, battle, collapse, flood, decree), show the event itself, not what came before or after. A line about fire must show fire — vivid orange and amber flames consuming timber structures, heat shimmer in air, black smoke columns rising. Do not substitute reconstruction, evacuation, or peaceful aftermath for the actual moment. Do not flinch from the climax.
+
   VISUAL CONTINUITY RULE — for consecutive scenes set in the same physical location, anchor the new shot to a specific element from the previous scene: name a shared architectural feature, landmark, or natural object that appears in both (e.g. "the same moss-covered stone gate seen in the previous scene, now framed from below looking up"). This creates the feeling of a continuous camera moving through one world rather than cutting between unrelated images.
 
   End every prompt with: "photorealistic 8K, historical documentary, cinematic lighting, shot on 35mm film"
