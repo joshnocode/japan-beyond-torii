@@ -455,6 +455,9 @@ export default function NewProjectPage() {
                     <div>brief_estimated_duration_seconds: <strong style={{ color: briefDebug.brief_estimated_duration_seconds !== briefDebug.server_dur_sec ? '#f44336' : '#4caf50' }}>{briefDebug.brief_estimated_duration_seconds}s</strong></div>
                     <div>claude_scene_count: <strong>{briefDebug.claude_scene_count}</strong></div>
                     <div style={{ marginTop: '6px', color: '#888' }}>raw_first_500: {briefDebug.raw_first_500}</div>
+                    <div style={{ color: '#888', fontWeight: 600, margin: '6px 0 4px' }}>— HISTORIAN / INSPECTOR —</div>
+                    <div>historian_entities: <strong style={{ color: (briefDebug.historian_entity_count ?? 0) === 0 ? '#f44336' : '#4caf50' }}>{briefDebug.historian_entity_count ?? 'n/a'}</strong></div>
+                    <div>inspector: <strong style={{ color: (briefDebug.inspector_failed ?? 0) > 0 ? '#ff9800' : '#4caf50' }}>{briefDebug.inspector_passed ?? 'n/a'}/{briefDebug.inspector_total ?? 'n/a'} passed</strong>{(briefDebug.inspector_failed ?? 0) > 0 && <span style={{ color: '#f44336', marginLeft: '6px' }}>({briefDebug.inspector_failed} revised)</span>}</div>
                   </>
                 )}
               </div>

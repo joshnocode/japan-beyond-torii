@@ -105,6 +105,36 @@ Return ONLY valid JSON — no markdown fences, no explanation.
   }
 }`
 
+const HISTORIAN_SYSTEM_PROMPT = `You are a specialist in Japanese visual history. Your role is to extract every historical entity from a narration script and produce precise visual reference data for AI image generation.
+
+For every entity you identify — events, locations, people, objects, garments, architecture, landscapes, crafts — return a JSON object with these fields:
+- entity: the name (English or Japanese as appropriate)
+- type: one of: event | place | person | object | garment | architecture | landscape | craft
+- visual_description: what it actually looked like — specific materials, colors, proportions, textures. Write as a costume designer and set dresser briefing a cinematographer, not as a historian summarizing facts.
+- common_errors: what AI image models typically get wrong about this entity (anachronistic elements, wrong silhouette, wrong materials, wrong scale, modern substitutions)
+- cinematic_detail: one specific tactile or visual detail that makes this entity feel real on screen — the kind of thing a prop master or location scout would notice
+
+Return ONLY valid JSON with no markdown fences:
+{"entities": [{"entity": "...", "type": "...", "visual_description": "...", "common_errors": "...", "cinematic_detail": "..."}]}`
+
+const INSPECTOR_SYSTEM_PROMPT = `You are the Level 1 Prompt Inspector for a Japanese historical documentary video pipeline. Your job is to score each scene's image_prompt against its script_excerpt, using the Historian's entity reference to catch inaccuracies and misalignment.
+
+Scoring rubric (0–10):
+- 0–3: Critical failure — wrong event, wrong place, wrong era, or a banned element present; or the excerpt describes a dramatic event (fire, battle, decree) and the prompt shows something else entirely
+- 4–5: Poor — prompt is so vague it could depict anything; no specific visual anchoring to the excerpt
+- 6: Borderline — directionally correct but missing at least one required specific element named in the excerpt
+- 7–8: Good — prompt faithfully depicts the excerpt with adequate historical grounding
+- 9–10: Excellent — prompt is precise, cinematically specific, and historically accurate
+
+PASSING GRADE: 7 or above. Be strict. A scene about a fire must show fire — not smoke, not aftermath, not reconstruction. A scene about a decree must show the act of issuing it — document, seal, official — not a generic street. Apply the Historian's reference to flag visual inaccuracies even when the narrative match is correct.
+
+For every scene that scores below 7, provide:
+- issues: a concise bullet list of what is wrong or missing
+- revision_instruction: a single imperative sentence telling the Director exactly what to fix
+
+Return ONLY valid JSON with no markdown fences:
+{"results": [{"scene_number": 1, "score": 8, "passed": true, "issues": "", "revision_instruction": ""}]}`
+
 /**
  * Parse Claude's response into a valid JS object.
  *
@@ -295,6 +325,82 @@ function closeOpenStructures(str) {
   return out
 }
 
+function buildHistorianReference(entities) {
+  if (!Array.isArray(entities) || !entities.length) return ''
+  const lines = entities.map(e =>
+    `[${(e.type || 'entity').toUpperCase()}] ${e.entity}: ${e.visual_description} | AVOID: ${e.common_errors} | KEY DETAIL: ${e.cinematic_detail}`
+  )
+  return `HISTORIAN ENTITY REFERENCE — authoritative visual descriptions for image prompts:\n${lines.join('\n')}`
+}
+
+async function runHistorian(client, script) {
+  const stream = client.messages.stream({
+    model: 'claude-sonnet-4-6',
+    max_tokens: 8000,
+    system: HISTORIAN_SYSTEM_PROMPT,
+    messages: [{ role: 'user', content: `Extract all historical entities from this narration script:\n\n${script.trim()}` }],
+  })
+  const raw = await stream.finalText()
+  const cleaned = raw.replace(/^```(?:json)?\s*/m, '').replace(/```\s*$/m, '').trim()
+  return JSON.parse(cleaned)
+}
+
+async function runInspector(client, scenes, historianReference) {
+  const sceneBlock = scenes.map(s =>
+    `Scene ${s.scene_number}:\nSCRIPT: ${s.script_excerpt}\nPROMPT: ${s.image_prompt}`
+  ).join('\n\n')
+  const userContent = [
+    historianReference ? `${historianReference}\n\n` : '',
+    `Score every scene below. Return results for ALL ${scenes.length} scenes.\n\n`,
+    sceneBlock,
+  ].join('')
+  const stream = client.messages.stream({
+    model: 'claude-sonnet-4-6',
+    max_tokens: 16000,
+    system: INSPECTOR_SYSTEM_PROMPT,
+    messages: [{ role: 'user', content: userContent }],
+  })
+  const raw = await stream.finalText()
+  const cleaned = raw.replace(/^```(?:json)?\s*/m, '').replace(/```\s*$/m, '').trim()
+  return JSON.parse(cleaned)
+}
+
+async function reviseFailedScenes(client, failedResults, scenes, historianReference) {
+  const failedNumbers = new Set(failedResults.map(r => r.scene_number))
+  const failedScenes = scenes.filter(s => failedNumbers.has(s.scene_number))
+
+  const revisionBlock = failedScenes.map(s => {
+    const inspection = failedResults.find(r => r.scene_number === s.scene_number)
+    return [
+      `Scene ${s.scene_number}:`,
+      `SCRIPT: ${s.script_excerpt}`,
+      `CURRENT PROMPT (score ${inspection.score}/10): ${s.image_prompt}`,
+      `ISSUES: ${inspection.issues}`,
+      `INSTRUCTION: ${inspection.revision_instruction}`,
+    ].join('\n')
+  }).join('\n\n')
+
+  const revisionSystem = `You are the director of a Japanese historical documentary. Rewrite only the image_prompt for each scene listed, following the revision instruction precisely.
+Rules: open with "Photorealistic cinematic 35mm documentary footage —" and close with "photorealistic 8K, historical documentary, cinematic lighting, shot on 35mm film". Apply the human figure rule: only include figures if the script explicitly describes a person performing a visible physical action; otherwise end with "no human figures, no people, empty scene."
+${historianReference ? `\n${historianReference}` : ''}
+Return ONLY valid JSON with no markdown fences: {"revised_scenes": [{"scene_number": <int>, "image_prompt": "<revised>"}]}`
+
+  const userContent = [
+    `Revise the image_prompt for these ${failedScenes.length} failed scenes:\n\n`,
+    revisionBlock,
+  ].join('')
+
+  const stream = client.messages.stream({
+    model: 'claude-sonnet-4-6',
+    max_tokens: 8000,
+    system: revisionSystem,
+    messages: [{ role: 'user', content: userContent }],
+  })
+  const raw = await stream.finalText()
+  const cleaned = raw.replace(/^```(?:json)?\s*/m, '').replace(/```\s*$/m, '').trim()
+  return JSON.parse(cleaned)
+}
+
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*')
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS')
@@ -323,7 +429,7 @@ export default async function handler(req, res) {
 
   const send = (data) => res.write(`data: ${JSON.stringify(data)}\n\n`)
 
-  send({ type: 'progress', message: `Director is reading the script and planning ${Math.round(estimatedDurSec / 60)}-minute edit…` })
+  send({ type: 'progress', message: 'Historian, Director, and Inspector are initializing…' })
 
   // Ping every 10 s so iOS Safari doesn't drop the idle connection.
   const pingInterval = setInterval(() => send({ type: 'ping' }), 10000)
@@ -331,24 +437,42 @@ export default async function handler(req, res) {
   try {
     const client = new Anthropic({ apiKey })
 
+    // ── Phase 1: Historian ────────────────────────────────────────────────────
+    send({ type: 'progress', message: 'Historian is cataloguing historical entities for visual reference…' })
+    let historianEntities = []
+    let historianReference = ''
+    try {
+      const historianResult = await runHistorian(client, script)
+      historianEntities = historianResult?.entities ?? []
+      historianReference = buildHistorianReference(historianEntities)
+      send({ type: 'progress', message: `Historian catalogued ${historianEntities.length} entities — handing reference to Director…` })
+    } catch (err) {
+      console.warn('Historian failed (non-fatal):', err.message)
+      send({ type: 'progress', message: 'Historian unavailable — Director proceeding without reference…' })
+    }
+
+    // ── Phase 2: Director ─────────────────────────────────────────────────────
+    send({ type: 'progress', message: `Director is reading the script and planning ${Math.round(estimatedDurSec / 60)}-minute edit…` })
+
     const userMessage = [
       `Script metadata:`,
       `  spoken_word_count = ${narrationWords}`,
       `  estimated_duration_seconds = ${estimatedDurSec}`,
       `  max_scenes = ${MAX_SCENES}`,
       ``,
+      ...(historianReference ? [historianReference, ''] : []),
       `Full narration script:`,
       ``,
       script.trim(),
     ].join('\n')
 
-    const stream = client.messages.stream({
+    const directorStream = client.messages.stream({
       model: 'claude-sonnet-4-6',
       max_tokens: 64000,
       system: SYSTEM_PROMPT,
       messages: [{ role: 'user', content: userMessage }],
     })
-    const raw = await stream.finalText()
+    const raw = await directorStream.finalText()
 
     // Capture Claude's raw values before parseResponse overwrites them
     let claudeRaw = {}
@@ -356,6 +480,47 @@ export default async function handler(req, res) {
 
     const brief = parseResponse(raw, estimatedDurSec)
 
+    if (!brief.scenes?.length) {
+      send({ type: 'error', message: 'No scenes were parsed from the script. Try a shorter script or check the format.' })
+      return
+    }
+
+    // ── Phase 3: Inspector ────────────────────────────────────────────────────
+    send({ type: 'progress', message: `Inspector is reviewing ${brief.scenes.length} scene prompts for accuracy…` })
+    let inspectorTotal = brief.scenes.length
+    let inspectorPassed = inspectorTotal
+    let inspectorFailed = 0
+    try {
+      const inspectionResult = await runInspector(client, brief.scenes, historianReference)
+      const results = inspectionResult?.results ?? []
+      inspectorTotal = results.length
+      inspectorPassed = results.filter(r => r.passed).length
+      inspectorFailed = results.filter(r => !r.passed).length
+
+      send({ type: 'progress', message: `Inspector: ${inspectorPassed}/${inspectorTotal} passed${inspectorFailed > 0 ? `, ${inspectorFailed} need revision` : ' ✓'}` })
+
+      // ── Phase 4: Revision ─────────────────────────────────────────────────
+      if (inspectorFailed > 0) {
+        const failedResults = results.filter(r => !r.passed)
+        send({ type: 'progress', message: `Director is revising ${inspectorFailed} failed scene prompt${inspectorFailed !== 1 ? 's' : ''}…` })
+        try {
+          const revisionResult = await reviseFailedScenes(client, failedResults, brief.scenes, historianReference)
+          const revisedMap = new Map((revisionResult?.revised_scenes ?? []).map(r => [r.scene_number, r.image_prompt]))
+          brief.scenes = brief.scenes.map(s =>
+            revisedMap.has(s.scene_number) ? { ...s, image_prompt: revisedMap.get(s.scene_number) } : s
+          )
+          send({ type: 'progress', message: `Revision complete — ${revisedMap.size} prompt${revisedMap.size !== 1 ? 's' : ''} updated` })
+        } catch (err) {
+          console.warn('Revision pass failed (non-fatal):', err.message)
+          send({ type: 'progress', message: 'Revision pass unavailable — original prompts kept' })
+        }
+      }
+    } catch (err) {
+      console.warn('Inspector failed (non-fatal):', err.message)
+      send({ type: 'progress', message: 'Inspector unavailable — original prompts kept' })
+    }
+
+    // ── Complete ──────────────────────────────────────────────────────────────
     const debug = {
       server_word_count: narrationWords,
       server_dur_sec: estimatedDurSec,
@@ -364,13 +529,13 @@ export default async function handler(req, res) {
       brief_estimated_duration_seconds: brief.estimated_duration_seconds,
       brief_scene_count: brief.scene_count,
       raw_first_500: raw.slice(0, 500),
+      historian_entity_count: historianEntities.length,
+      inspector_total: inspectorTotal,
+      inspector_passed: inspectorPassed,
+      inspector_failed: inspectorFailed,
     }
 
-    if (!brief.scenes?.length) {
-      send({ type: 'error', message: 'No scenes were parsed from the script. Try a shorter script or check the format.' })
-    } else {
-      send({ type: 'complete', data: brief, debug })
-    }
+    send({ type: 'complete', data: brief, debug })
   } catch (err) {
     console.error('analyze error:', err)
     send({ type: 'error', message: err.message || 'Analysis failed' })
