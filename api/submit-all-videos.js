@@ -12,6 +12,7 @@ export default async function handler(req, res) {
 
   const { scenes } = req.body || {}
   if (!Array.isArray(scenes) || !scenes.length) return res.status(400).json({ error: 'scenes array is required' })
+  if (scenes.length > 150) return res.status(400).json({ error: `Too many scenes (${scenes.length} — max 150 per submission)` })
 
   const apiKey = process.env.FAL_API_KEY || process.env.VITE_FAL_API_KEY
   if (!apiKey) return res.status(500).json({ error: 'FAL_API_KEY is not configured' })

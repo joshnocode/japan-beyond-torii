@@ -50,6 +50,7 @@ export default async function handler(req, res) {
 
   try {
     const chunks = chunkText(project.script)
+    if (chunks.length > 20) return res.status(400).json({ error: `Script too long for audio generation (${chunks.length} chunks — max 20, ~90,000 characters)` })
     const buffers = []
 
     for (const chunk of chunks) {
