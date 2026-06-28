@@ -209,20 +209,34 @@ export default function NewProjectPage() {
     try {
       const briefWithStyle = { ...brief, visual_style_guide: styleGuide }
 
-      const { data: project, error: insertErr } = await supabase
-        .from('projects')
-        .insert({
-          user_id: session.user.id,
-          title: title.trim() || brief.title || 'Untitled Project',
-          script,
-          brief: briefWithStyle,
-          status: 'draft',
-          cost_cents: Math.round((brief.cost_estimate?.total_usd || 0) * 100),
-        })
-        .select()
-        .single()
+      // Retry helper for transient iOS Safari "TypeError: Load failed" network errors
+      const withRetry = async (label, fn) => {
+        const delays = [1000, 2000, 4000]
+        for (let attempt = 0; attempt <= delays.length; attempt++) {
+          try { return await fn() }
+          catch (err) {
+            if (attempt === delays.length) throw new Error(`${label} failed after ${attempt + 1} attempts: ${err.message}`)
+            await new Promise(r => setTimeout(r, delays[attempt]))
+          }
+        }
+      }
 
-      if (insertErr) throw new Error(insertErr.message)
+      const project = await withRetry('Project insert', async () => {
+        const { data, error: insertErr } = await supabase
+          .from('projects')
+          .insert({
+            user_id: session.user.id,
+            title: title.trim() || brief.title || 'Untitled Project',
+            script,
+            brief: briefWithStyle,
+            status: 'draft',
+            cost_cents: Math.round((brief.cost_estimate?.total_usd || 0) * 100),
+          })
+          .select()
+          .single()
+        if (insertErr) throw new Error(insertErr.message)
+        return data
+      })
 
       const scenes = brief.scenes.map((s) => ({
         project_id: project.id,
@@ -235,24 +249,13 @@ export default function NewProjectPage() {
 
       // Insert in chunks of 20 — Supabase silently truncates large single-batch
       // inserts at the server's max_rows setting with no error returned.
-      // Each chunk retries up to 3× with exponential backoff to handle transient
-      // iOS Safari network errors ("TypeError: Load failed").
       const CHUNK = 20
-      const insertChunkWithRetry = async (chunk, offset) => {
-        const delays = [1000, 2000, 4000]
-        for (let attempt = 0; attempt <= delays.length; attempt++) {
-          try {
-            const { error: scenesErr } = await supabase.from('scenes').insert(chunk)
-            if (scenesErr) throw new Error(scenesErr.message)
-            return
-          } catch (err) {
-            if (attempt === delays.length) throw new Error(`Scene insert failed (rows ${offset}–${offset + CHUNK}) after ${attempt + 1} attempts: ${err.message}`)
-            await new Promise(r => setTimeout(r, delays[attempt]))
-          }
-        }
-      }
       for (let i = 0; i < scenes.length; i += CHUNK) {
-        await insertChunkWithRetry(scenes.slice(i, i + CHUNK), i)
+        const offset = i
+        await withRetry(`Scene insert (rows ${offset}–${offset + CHUNK})`, async () => {
+          const { error: scenesErr } = await supabase.from('scenes').insert(scenes.slice(offset, offset + CHUNK))
+          if (scenesErr) throw new Error(scenesErr.message)
+        })
       }
 
       navigate(`/project/${project.id}`)
