@@ -7,6 +7,7 @@ import ffmpegStaticPath from 'ffmpeg-static'
 
 const DISSOLVE_DUR = 0.3
 const GRADE_FILTER = 'eq=contrast=1.05:saturation=1.03,noise=alls=4:allf=t+u'
+const SFX_VOLUME = 0.2  // ambient SFX at 20% — Alfred narration clearly primary
 
 export const maxDuration = 300
 
@@ -23,6 +24,24 @@ function run(ffmpeg, args) {
       else resolve()
     })
   })
+}
+
+async function generateSfx(apiKey, prompt, durationSec) {
+  const resp = await fetch('https://api.elevenlabs.io/v1/sound-generation', {
+    method: 'POST',
+    headers: {
+      'xi-api-key': apiKey,
+      'Content-Type': 'application/json',
+      'Accept': 'audio/mpeg',
+    },
+    body: JSON.stringify({
+      text: prompt,
+      duration_seconds: Math.min(durationSec, 22.0),
+      prompt_influence: 0.3,
+    }),
+  })
+  if (!resp.ok) throw new Error(`ElevenLabs SFX HTTP ${resp.status}`)
+  return Buffer.from(await resp.arrayBuffer())
 }
 
 export default async function handler(req, res) {
@@ -52,9 +71,7 @@ export default async function handler(req, res) {
 
   if (projErr || !project) return res.status(404).json({ error: 'Project not found' })
 
-  // Deduplicate by scene_index before assembly — keep the row with a video_url,
-  // then image_url, then whichever came first. This prevents repeated clips in
-  // the final video even if duplicate rows exist in the database.
+  // Deduplicate by scene_index — keep the row with a video_url.
   const rawCount = (scenes || []).length
   const deduped = new Map()
   for (const s of (scenes || [])) {
@@ -64,13 +81,17 @@ export default async function handler(req, res) {
   const dedupedScenes = [...deduped.values()].sort((a, b) => a.scene_index - b.scene_index)
   const dupCount = rawCount - dedupedScenes.length
 
-  // Replace scenes reference with deduplicated list
-  const scenesForAssembly = dedupedScenes
-
-  // Also detect duplicate video_url values (different indices, same clip file)
-  const urlCount = new Map()
-  for (const s of scenesForAssembly) { if (s.video_url) urlCount.set(s.video_url, (urlCount.get(s.video_url) || 0) + 1) }
-  const sharedUrls = [...urlCount.entries()].filter(([, n]) => n > 1)
+  // Deduplicate by video_url — first occurrence wins.
+  const seenUrls = new Set()
+  const urlDedupedScenes = dedupedScenes.filter(s => {
+    if (!s.video_url || !seenUrls.has(s.video_url)) {
+      if (s.video_url) seenUrls.add(s.video_url)
+      return true
+    }
+    return false
+  })
+  const urlDupCount = dedupedScenes.length - urlDedupedScenes.length
+  const scenesForAssembly = urlDedupedScenes
 
   const missing = scenesForAssembly.filter(s => !s.video_url)
   if (missing.length) return res.status(400).json({ error: `${missing.length} scenes are missing video` })
@@ -90,13 +111,35 @@ export default async function handler(req, res) {
     const ffmpeg = await getFFmpeg()
     log.push(`[${ts()}] ffmpeg ready`)
 
-    // Log dedup results
-    if (dupCount > 0) log.push(`[${ts()}] ⚠ deduped ${dupCount} duplicate rows before assembly`)
-    if (sharedUrls.length > 0) log.push(`[${ts()}] ⚠ ${sharedUrls.length} video URL(s) shared across scenes: ${sharedUrls.map(([u, n]) => `${n}×${u.split('/').pop()}`).join(', ')}`)
+    if (dupCount > 0) log.push(`[${ts()}] ⚠ deduped ${dupCount} duplicate scene_index rows before assembly`)
+    if (urlDupCount > 0) log.push(`[${ts()}] ⚠ removed ${urlDupCount} scenes with duplicate video_url (same clip would have played twice)`)
 
-    // Download clips and audio in parallel
-    log.push(`[${ts()}] downloading ${scenesForAssembly.length} clips + audio${dupCount > 0 ? ` (${dupCount} duplicates removed)` : ''}`)
-    const [clips, audioBuf] = await Promise.all([
+    // Build brief lookups before download phase so they're available for SFX generation
+    const briefScenes = project.brief?.scenes || []
+    const briefDurMap = new Map(briefScenes.map(s => [s.scene_number - 1, s.duration_sec]))
+    const totalBriefDur = briefScenes.reduce((sum, s) => sum + (s.duration_sec || 0), 0)
+    const sfxPromptMap = new Map(briefScenes.map(s => [s.scene_number - 1, s.sound_effect_prompt]))
+    const sfxApiKey = process.env.ELEVENLABS_API_KEY || process.env.VITE_ELEVENLABS_API_KEY
+
+    // Generate SFX in parallel with clip + narration downloads
+    log.push(`[${ts()}] downloading ${scenesForAssembly.length} clips + audio${sfxApiKey ? ' + SFX' : ''}`)
+
+    const sfxPromise = sfxApiKey
+      ? Promise.all(scenesForAssembly.map(async (s) => {
+          const prompt = sfxPromptMap.get(s.scene_index)
+          const dur = briefDurMap.get(s.scene_index) || 5
+          if (!prompt) return { scene_index: s.scene_index, buf: null }
+          try {
+            const buf = await generateSfx(sfxApiKey, prompt, dur)
+            return { scene_index: s.scene_index, buf }
+          } catch (err) {
+            log.push(`[${ts()}] ⚠ SFX scene ${s.scene_index + 1} failed: ${err.message}`)
+            return { scene_index: s.scene_index, buf: null }
+          }
+        }))
+      : Promise.resolve(null)
+
+    const [clips, audioBuf, sfxResults] = await Promise.all([
       Promise.all(scenesForAssembly.map(async (s) => {
         const resp = await fetch(s.video_url)
         if (!resp.ok) throw new Error(`Scene ${s.scene_index + 1} download failed (HTTP ${resp.status})`)
@@ -109,10 +152,11 @@ export default async function handler(req, res) {
             return r.arrayBuffer().then(ab => Buffer.from(ab))
           })
         : Promise.resolve(null),
+      sfxPromise,
     ])
     log.push(`[${ts()}] downloads complete`)
 
-    // Write audio and probe duration for safety-net loop calculation
+    // Write narration and probe duration
     let audioPath = null
     let audioDurSec = null
     if (audioBuf) {
@@ -134,18 +178,12 @@ export default async function handler(req, res) {
       }
     }
 
-    // Build per-scene duration map from director's brief.
-    // Falls back to proportional average if brief data is missing.
-    const briefScenes = project.brief?.scenes || []
-    const briefDurMap = new Map(briefScenes.map(s => [s.scene_number - 1, s.duration_sec]))
-    const totalBriefDur = briefScenes.reduce((sum, s) => sum + (s.duration_sec || 0), 0)
     const fallbackDur = (audioDurSec && scenesForAssembly.length)
       ? audioDurSec / scenesForAssembly.length
       : 5
     const getClipDur = (scene_index) => {
       const d = briefDurMap.get(scene_index)
       if (d && d > 0) return d
-      // Scale fallback proportionally if director durations were partially set
       return totalBriefDur > 0 ? fallbackDur : 5
     }
     log.push(`[${ts()}] using director durations (fallback=${fallbackDur.toFixed(1)}s)`)
@@ -175,16 +213,64 @@ export default async function handler(req, res) {
     // Sort by scene order
     scaledPaths.sort((a, b) => a.scene_index - b.scene_index)
 
+    // Build ambient SFX track — one audio segment per scene in timeline order,
+    // looped/trimmed to the exact clip duration, then concatenated.
+    let ambientPath = null
+    if (sfxResults) {
+      const sfxMap = new Map(sfxResults.map(r => [r.scene_index, r.buf]))
+      const sfxSegPaths = []
+      let sfxSuccessCount = 0
+
+      for (const { scene_index } of scaledPaths) {
+        const clipDur = getClipDur(scene_index)
+        const sfxBuf = sfxMap.get(scene_index)
+        const segPath = join(jobDir, `sfx_seg_${scene_index}.aac`)
+
+        if (sfxBuf) {
+          const rawPath = join(jobDir, `sfx_raw_${scene_index}.mp3`)
+          await writeFile(rawPath, sfxBuf)
+          // Loop raw SFX to exactly fill clip duration
+          await run(ffmpeg, ['-loglevel', 'error',
+            '-stream_loop', '-1', '-i', rawPath,
+            '-t', clipDur.toFixed(3),
+            '-c:a', 'aac', '-b:a', '128k', '-ar', '44100', '-ac', '2',
+            '-y', segPath])
+          await unlink(rawPath)
+          sfxSuccessCount++
+        } else {
+          // Silent stereo placeholder keeps timeline sync for scenes without SFX
+          await run(ffmpeg, ['-loglevel', 'error',
+            '-f', 'lavfi', '-i', `aevalsrc=0:c=stereo:s=44100:d=${clipDur.toFixed(3)}`,
+            '-c:a', 'aac', '-b:a', '128k',
+            '-y', segPath])
+        }
+        sfxSegPaths.push(segPath)
+      }
+
+      if (sfxSuccessCount > 0) {
+        const concatListPath = join(jobDir, 'sfx_concat.txt')
+        await writeFile(concatListPath, sfxSegPaths.map(p => `file '${p}'`).join('\n'))
+        ambientPath = join(jobDir, 'ambient.aac')
+        await run(ffmpeg, ['-loglevel', 'error',
+          '-f', 'concat', '-safe', '0', '-i', concatListPath,
+          '-c:a', 'copy',
+          '-y', ambientPath])
+        log.push(`[${ts()}] SFX ambient track built (${sfxSuccessCount}/${scaledPaths.length} scenes with audio)`)
+      } else {
+        log.push(`[${ts()}] SFX skipped — all scene generations failed`)
+      }
+    } else {
+      log.push(`[${ts()}] SFX skipped — no ELEVENLABS_API_KEY`)
+    }
+
     const mergedPath = join(jobDir, 'merged.mp4')
     const outputPath = join(jobDir, 'output.mp4')
 
     if (scaledPaths.length === 1) {
-      // Single clip — no xfade needed, just copy
       await copyFile(scaledPaths[0].path, mergedPath)
       log.push(`[${ts()}] single clip, skipped xfade`)
     } else {
-      // Build xfade filtergraph — dissolve transitions between every consecutive clip pair.
-      // Offset is cumulative: each transition starts at sum(prevDurs) - n*DISSOLVE_DUR from timeline start.
+      // Build xfade filtergraph — dissolve transitions between every consecutive clip pair
       const inputArgs = scaledPaths.flatMap(({ path }) => ['-i', path])
       const filterParts = []
       let cumulativeOffset = 0
@@ -208,14 +294,37 @@ export default async function handler(req, res) {
       log.push(`[${ts()}] xfade done`)
     }
 
-    // Mux audio into the merged video
-    if (audioPath) {
+    // Mux audio — narration primary, ambient SFX in background
+    if (audioPath && ambientPath) {
+      // Mix: narration vol=1.0, SFX vol=0.2 — Alfred clearly primary
+      const muxArgs = ['-loglevel', 'error',
+        '-i', mergedPath, '-i', audioPath, '-i', ambientPath,
+        '-filter_complex',
+          `[1:a]volume=1.0[nar];[2:a]volume=${SFX_VOLUME}[sfx];[nar][sfx]amix=inputs=2:duration=first:dropout_transition=0[mixed];[mixed]alimiter=level_in=1:level_out=0.95:limit=0.95[out]`,
+        '-map', '0:v:0', '-map', '[out]',
+        '-c:v', 'copy', '-c:a', 'aac', '-b:a', '128k',
+        '-shortest', '-y', outputPath]
+      log.push(`[${ts()}] muxing narration + SFX ambient (vol=${SFX_VOLUME})`)
+      await run(ffmpeg, muxArgs)
+      log.push(`[${ts()}] mux done`)
+    } else if (audioPath) {
       const muxArgs = ['-loglevel', 'error',
         '-i', mergedPath, '-i', audioPath,
         '-map', '0:v:0', '-map', '1:a:0',
         '-c:v', 'copy', '-c:a', 'aac', '-b:a', '128k',
         '-shortest', '-y', outputPath]
-      log.push(`[${ts()}] muxing audio`)
+      log.push(`[${ts()}] muxing narration only`)
+      await run(ffmpeg, muxArgs)
+      log.push(`[${ts()}] mux done`)
+    } else if (ambientPath) {
+      // No narration — play SFX at 60% so it's not too quiet as the sole audio
+      const muxArgs = ['-loglevel', 'error',
+        '-i', mergedPath, '-i', ambientPath,
+        '-filter_complex', `[1:a]volume=0.6[sfx];[sfx]alimiter=level_in=1:level_out=0.95:limit=0.95[out]`,
+        '-map', '0:v:0', '-map', '[out]',
+        '-c:v', 'copy', '-c:a', 'aac', '-b:a', '128k',
+        '-shortest', '-y', outputPath]
+      log.push(`[${ts()}] muxing SFX ambient only`)
       await run(ffmpeg, muxArgs)
       log.push(`[${ts()}] mux done`)
     } else {

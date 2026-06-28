@@ -561,6 +561,12 @@ export default function NewProjectPage() {
                         <span className="scene-block-label">Motion</span>
                         <p className="scene-prompt">{scene.motion_prompt}</p>
                       </div>
+                      {scene.sound_effect_prompt && (
+                        <div className="scene-block">
+                          <span className="scene-block-label">Sound Effect</span>
+                          <p className="scene-prompt">{scene.sound_effect_prompt}</p>
+                        </div>
+                      )}
                     </div>
                   </div>
                 ))}
