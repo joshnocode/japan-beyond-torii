@@ -62,9 +62,10 @@ export default function LoginPage() {
           {error && <p className="error-message">{error}</p>}
 
           <button type="submit" className="btn-primary" disabled={loading}>
-            {loading ? 'Signing in…' : 'Sign In'} <span style={{ opacity: 0.4, fontSize: '11px', fontWeight: 400 }}>v28Jun-b</span>
+            {loading ? 'Signing in…' : 'Sign In'}
           </button>
         </form>
+        <p style={{ textAlign: 'center', marginTop: '20px', fontSize: '11px', color: 'rgba(255,255,255,0.35)', fontWeight: 400 }}>v28Jun-b</p>
       </div>
     </div>
   )
