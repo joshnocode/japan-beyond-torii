@@ -75,7 +75,7 @@ For each scene:
   VISUAL CONTINUITY RULE — for consecutive scenes set in the same physical location, anchor the new shot to a specific element from the previous scene: name a shared architectural feature, landmark, or natural object that appears in both (e.g. "the same moss-covered stone gate seen in the previous scene, now framed from below looking up"). This creates the feeling of a continuous camera moving through one world rather than cutting between unrelated images.
 
   End every prompt with: "photorealistic 8K, historical documentary, cinematic lighting, shot on 35mm film"
-- motion_prompt: one physical camera move — slow dolly forward, aerial drone descent, low-angle tracking, sweeping crane reveal, parallax push, or steadicam walk. Always specify slow/very slow speed. MOTION CONSTRAINT: prefer moves that push toward or pull away from the subject (dolly in/out, drone ascent/descent, slow zoom). Avoid fast lateral tracking across fine geometric surfaces — roof tiles, lattice screens, carved wood — as this causes motion artifacts. Wide landscape pans are safe; tight architectural tracking is not.
+- motion_prompt: one physical camera move — slow dolly forward, aerial drone descent, low-angle tracking, sweeping crane reveal, parallax push, or steadicam walk. Always specify slow/very slow speed. MOTION CONSTRAINT: prefer moves that push toward or pull away from the subject (dolly in/out, drone ascent/descent, slow zoom). Avoid fast lateral tracking across fine geometric surfaces — roof tiles, lattice screens, carved wood — as this causes motion artifacts. Wide landscape pans are safe; tight architectural tracking is not. CAMERA VECTOR CHAIN — plan motion_prompt values as a sequence, not independently. Each shot's movement should complement the previous: if scene N ends dolly-in (pushing deeper into space), scene N+1 either continues the axis (dolly-in into new space, creating seamless spatial flow) or cuts clean to a vertical move (crane up, drone descent) for intentional rhythm. Never put two consecutive lateral pans in opposite directions — left-pan into right-pan creates visual whiplash. Map the full camera vector chain for the entire video before writing any individual motion_prompt.
 
 Return ONLY valid JSON — no markdown fences, no explanation.
 
@@ -344,7 +344,7 @@ export default async function handler(req, res) {
 
     const stream = client.messages.stream({
       model: 'claude-sonnet-4-6',
-      max_tokens: 20000,
+      max_tokens: 32000,
       system: SYSTEM_PROMPT,
       messages: [{ role: 'user', content: userMessage }],
     })

@@ -209,49 +209,57 @@ export default function ProjectPage() {
     sceneStartRef.current = null
   }, [id])
 
-  // ── Image generation ──────────────────────────────────────────
+  // ── Image generation — parallel workers ──────────────────────
   const startImageGeneration = async () => {
     if (activeRef.current) return
     activeRef.current = true
     setPhase('images')
     setError('')
     sceneTimesRef.current = []
+    sceneStartRef.current = Date.now()
+    setElapsedSeconds(0)
 
     await supabase.from('projects').update({ status: 'processing' }).eq('id', id)
     patchProject({ status: 'processing' })
 
+    const CONCURRENCY = 3
     const pending = scenes.filter(s => !s.image_url)
-    for (const scene of pending) {
-      if (!activeRef.current) break
-      setCurrentIdx(scene.scene_index)
-      setCurrentAction('Generating image…')
-      sceneStartRef.current = Date.now()
-      setElapsedSeconds(0)
+    const queue = [...pending]
 
-      await supabase.from('scenes').update({ status: 'generating_image' }).eq('id', scene.id)
-      patchScene(scene.id, { status: 'generating_image' })
+    const worker = async () => {
+      while (activeRef.current) {
+        const scene = queue.shift()
+        if (!scene) break
 
-      try {
-        const image_url = await generateImageWithRetry(scene)
+        setCurrentIdx(scene.scene_index)
+        setCurrentAction('Generating image…')
 
-        const t = Date.now() - sceneStartRef.current
-        const times = [...sceneTimesRef.current, t]
-        sceneTimesRef.current = times
-        setAvgSceneMs(times.reduce((a, b) => a + b, 0) / times.length)
+        await supabase.from('scenes').update({ status: 'generating_image' }).eq('id', scene.id)
+        patchScene(scene.id, { status: 'generating_image' })
 
-        await supabase.from('scenes').update({ image_url, status: 'complete' }).eq('id', scene.id)
-        patchScene(scene.id, { image_url, status: 'complete' })
+        try {
+          const t0 = Date.now()
+          const image_url = await generateImageWithRetry(scene)
+          const t = Date.now() - t0
+          sceneTimesRef.current = [...sceneTimesRef.current, t]
+          setAvgSceneMs(sceneTimesRef.current.reduce((a, b) => a + b, 0) / sceneTimesRef.current.length)
 
-        if (scene.scene_index === 0) {
-          await supabase.from('projects').update({ thumbnail_url: image_url }).eq('id', id)
-          patchProject({ thumbnail_url: image_url })
+          await supabase.from('scenes').update({ image_url, status: 'complete' }).eq('id', scene.id)
+          patchScene(scene.id, { image_url, status: 'complete' })
+
+          if (scene.scene_index === 0) {
+            await supabase.from('projects').update({ thumbnail_url: image_url }).eq('id', id)
+            patchProject({ thumbnail_url: image_url })
+          }
+        } catch (err) {
+          await supabase.from('scenes').update({ status: 'error' }).eq('id', scene.id)
+          patchScene(scene.id, { status: 'error' })
+          setError(`Scene ${scene.scene_index + 1} image failed: ${err.message}`)
         }
-      } catch (err) {
-        await supabase.from('scenes').update({ status: 'error' }).eq('id', scene.id)
-        patchScene(scene.id, { status: 'error' })
-        setError(`Scene ${scene.scene_index + 1} image failed: ${err.message}`)
       }
     }
+
+    await Promise.all(Array.from({ length: Math.min(CONCURRENCY, pending.length) }, worker))
 
     const { data: allImages } = await supabase.from('scenes').select('image_url').eq('project_id', id)
     const newStatus = allImages?.every(s => s.image_url) ? 'images_ready' : 'processing'
@@ -426,6 +434,16 @@ export default function ProjectPage() {
     if (!scene.image_url) return retrySingleImage(scene)
     return retrySingleScene(scene)
   }, [retrySingleImage, retrySingleScene])
+
+  const regenerateScene = useCallback(async (scene) => {
+    if (activeRef.current) return
+    const clearedScene = { ...scene, image_url: null, video_url: null, video_request_id: null, status: 'pending' }
+    await supabase.from('scenes')
+      .update({ image_url: null, video_url: null, video_request_id: null, status: 'pending' })
+      .eq('id', scene.id)
+    patchScene(scene.id, { image_url: null, video_url: null, video_request_id: null, status: 'pending' })
+    await retrySingleImage(clearedScene)
+  }, [retrySingleImage])
 
   const generateAudio = async () => {
     setGeneratingAudio(true)
@@ -658,6 +676,7 @@ export default function ProjectPage() {
               phase={phase}
               idlePhase={phase === 'idle'}
               onRetry={handleSceneRetry}
+              onRegenerate={regenerateScene}
             />
           ))}
         </div>
@@ -758,7 +777,7 @@ function ProgressBanner({ step, detail, pct, done, total, eta }) {
 }
 
 // ── Scene card ─────────────────────────────────────────────────
-function SceneCard({ scene, scriptExcerpt, isActive, activeAction, phase, idlePhase, onRetry }) {
+function SceneCard({ scene, scriptExcerpt, isActive, activeAction, phase, idlePhase, onRetry, onRegenerate }) {
   const [expanded, setExpanded] = useState(false)
   const hasVideo = !!scene.video_url
   const hasImage = !!scene.image_url
@@ -861,6 +880,11 @@ function SceneCard({ scene, scriptExcerpt, isActive, activeAction, phase, idlePh
             {isError && idlePhase && (
               <button className="btn-primary" style={{ width: '100%', marginTop: '1rem' }} onClick={() => { onRetry(scene); setExpanded(false) }}>
                 ↺ Retry Image Generation
+              </button>
+            )}
+            {!isError && idlePhase && (hasImage || hasVideo) && (
+              <button className="btn-secondary" style={{ width: '100%', marginTop: '1rem' }} onClick={() => { onRegenerate(scene); setExpanded(false) }}>
+                ↻ Regenerate Scene
               </button>
             )}
           </div>

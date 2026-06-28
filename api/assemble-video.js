@@ -5,6 +5,9 @@ import { writeFile, readFile, mkdir, rm, chmod, copyFile, unlink } from 'node:fs
 import { tmpdir } from 'node:os'
 import ffmpegStaticPath from 'ffmpeg-static'
 
+const DISSOLVE_DUR = 0.3
+const GRADE_FILTER = 'eq=contrast=1.05:saturation=1.03,noise=alls=4:allf=t+u'
+
 export const maxDuration = 300
 
 async function getFFmpeg() {
@@ -157,7 +160,7 @@ export default async function handler(req, res) {
 
       const clipDur = getClipDur(scene_index)
       const args = ['-loglevel', 'error', '-stream_loop', '-1', '-i', origPath,
-        '-vf', 'scale=720:-2',
+        '-vf', `scale=720:-2,${GRADE_FILTER}`,
         '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '34',
         '-maxrate', '1400k', '-bufsize', '2800k', '-an',
         '-t', clipDur.toFixed(3),
@@ -169,22 +172,56 @@ export default async function handler(req, res) {
     }
     log.push(`[${ts()}] all clips encoded`)
 
-    // Sort by scene order and concat
+    // Sort by scene order
     scaledPaths.sort((a, b) => a.scene_index - b.scene_index)
-    const listPath = join(jobDir, 'list.txt')
-    await writeFile(listPath, scaledPaths.map(({ path }) => `file '${path}'`).join('\n'))
 
-    // Final concat + audio mux
+    const mergedPath = join(jobDir, 'merged.mp4')
     const outputPath = join(jobDir, 'output.mp4')
-    const concatArgs = ['-loglevel', 'error', '-f', 'concat', '-safe', '0', '-i', listPath]
-    if (audioPath) concatArgs.push('-i', audioPath, '-map', '0:v:0', '-map', '1:a:0')
-    concatArgs.push('-c:v', 'copy')
-    if (audioPath) concatArgs.push('-c:a', 'aac', '-b:a', '128k', '-shortest')
-    concatArgs.push('-y', outputPath)
 
-    log.push(`[${ts()}] running ffmpeg concat + mux`)
-    await run(ffmpeg, concatArgs)
-    log.push(`[${ts()}] ffmpeg done`)
+    if (scaledPaths.length === 1) {
+      // Single clip — no xfade needed, just copy
+      await copyFile(scaledPaths[0].path, mergedPath)
+      log.push(`[${ts()}] single clip, skipped xfade`)
+    } else {
+      // Build xfade filtergraph — dissolve transitions between every consecutive clip pair.
+      // Offset is cumulative: each transition starts at sum(prevDurs) - n*DISSOLVE_DUR from timeline start.
+      const inputArgs = scaledPaths.flatMap(({ path }) => ['-i', path])
+      const filterParts = []
+      let cumulativeOffset = 0
+      for (let i = 1; i < scaledPaths.length; i++) {
+        const prevDur = getClipDur(scaledPaths[i - 1].scene_index)
+        cumulativeOffset += prevDur - DISSOLVE_DUR
+        const inp = i === 1 ? '[0:v][1:v]' : `[xv${i - 1}][${i}:v]`
+        const out = i === scaledPaths.length - 1 ? '[vout]' : `[xv${i}]`
+        filterParts.push(`${inp}xfade=transition=dissolve:duration=${DISSOLVE_DUR}:offset=${cumulativeOffset.toFixed(3)}${out}`)
+      }
+
+      const xfadeArgs = ['-loglevel', 'error',
+        ...inputArgs,
+        '-filter_complex', filterParts.join(';'),
+        '-map', '[vout]',
+        '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '34',
+        '-maxrate', '1400k', '-bufsize', '2800k',
+        '-an', '-y', mergedPath]
+      log.push(`[${ts()}] running xfade filtergraph (${scaledPaths.length} clips, ${DISSOLVE_DUR}s dissolves)`)
+      await run(ffmpeg, xfadeArgs)
+      log.push(`[${ts()}] xfade done`)
+    }
+
+    // Mux audio into the merged video
+    if (audioPath) {
+      const muxArgs = ['-loglevel', 'error',
+        '-i', mergedPath, '-i', audioPath,
+        '-map', '0:v:0', '-map', '1:a:0',
+        '-c:v', 'copy', '-c:a', 'aac', '-b:a', '128k',
+        '-shortest', '-y', outputPath]
+      log.push(`[${ts()}] muxing audio`)
+      await run(ffmpeg, muxArgs)
+      log.push(`[${ts()}] mux done`)
+    } else {
+      await copyFile(mergedPath, outputPath)
+      log.push(`[${ts()}] no audio, using merged video as output`)
+    }
 
     const outputBuf = await readFile(outputPath)
     const sizeMB = (outputBuf.length / 1024 / 1024).toFixed(1)
